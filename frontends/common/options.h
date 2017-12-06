@@ -106,6 +106,8 @@ class CompilerOptions : public Util::Options {
 
     // True if we are compiling a P4 v1.0 or v1.1 program
     bool isv1() const;
+    IR::V1Program::Sizes v1Sizes;
+    
     // Get a debug hook function suitable for insertion
     // in the pass managers that are executed.
     DebugHook getDebugHook() const;

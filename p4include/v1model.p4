@@ -30,9 +30,9 @@ match_kind {
 // Are these correct?
 @metadata @name("standard_metadata")
 struct standard_metadata_t {
-    bit<9>  ingress_port;
-    bit<9>  egress_spec;
-    bit<9>  egress_port;
+    bit<V1_INGRESS_PORT_SIZE> ingress_port;
+    bit<V1_EGRESS_SPEC_SIZE>  egress_spec;
+    bit<V1_EGRESS_PORT_SIZE>  egress_port;
     bit<32> clone_spec;
     bit<32> instance_type;
     bit<1>  drop;

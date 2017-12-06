@@ -176,18 +176,19 @@ void P4ParserDriver::onReadErrorDeclaration(IR::Type_Error* error) {
 
 namespace V1 {
 
-V1ParserDriver::V1ParserDriver()
-  : global(new IR::V1Program)
+V1ParserDriver::V1ParserDriver(const IR::V1Program::Sizes &sizes)
+  : global(new IR::V1Program(sizes))
 { }
 
 /* static */ const IR::V1Program*
-V1ParserDriver::parse(std::istream& in, const char* sourceFile,
-                      unsigned sourceLine /* = 1 */) {
+V1ParserDriver::parse(std::istream& in,
+                      const char* sourceFile, unsigned sourceLine /* = 1 */,
+                      const IR::V1Program::Sizes &sizes) {
     if (Log::verbose())
         std::cout << "Parsing P4-14 program " << sourceFile << std::endl;
 
     // Create and configure the parser and lexer.
-    V1ParserDriver driver;
+    V1ParserDriver driver(sizes);
     V1Lexer lexer(in);
     V1Parser parser(driver, lexer);
 
@@ -205,10 +206,11 @@ V1ParserDriver::parse(std::istream& in, const char* sourceFile,
 }
 
 /* static */ const IR::V1Program*
-V1ParserDriver::parse(FILE* in, const char* sourceFile,
-                      unsigned sourceLine /* = 1 */) {
+V1ParserDriver::parse(FILE* in,
+                      const char* sourceFile, unsigned sourceLine /* = 1 */,
+                      const IR::V1Program::Sizes &sizes) {
     AutoStdioInputStream inputStream(in);
-    return parse(inputStream.get(), sourceFile, sourceLine);
+    return parse(inputStream.get(), sourceFile, sourceLine, sizes);
 }
 
 IR::Constant* V1ParserDriver::constantFold(IR::Expression* expr) {

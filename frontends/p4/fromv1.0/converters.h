@@ -157,7 +157,7 @@ class Converter : public PassManager {
 
  public:
     Converter();
-    void loadModel() { structure.loadModel(); }
+    void loadModel(cstring ppoptions) { structure.loadModel(ppoptions); }
     Visitor::profile_t init_apply(const IR::Node* node) override;
 };
 

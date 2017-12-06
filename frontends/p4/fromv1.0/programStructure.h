@@ -254,7 +254,7 @@ class ProgramStructure {
     const IR::Expression* latest;
     const int defaultRegisterWidth = 32;
 
-    void loadModel();
+    void loadModel(cstring ppoptions);
     void createExterns();
     void createTypes();
     const IR::P4Program* create(Util::SourceInfo info);

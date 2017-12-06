@@ -467,8 +467,22 @@ class AttributeRef : Expression {
 class V1Program {
     inline NameMap<Node, std::multimap>         scope;
 
+#emit
+    // This should be kept in sync with v1model.p4
+    struct Sizes {
+        size_t ingress_port          =  9;
+        size_t packet_length         = 32;
+        size_t egress_spec           =  9;
+        size_t egress_port           =  9;
+        size_t egress_instance       = 16;
+        size_t instance_type         = 32;
+        size_t parser_status         =  8;
+        size_t parser_error_location =  8;
+    };
+#end
+
 #noconstructor
-    explicit V1Program();
+    explicit V1Program(const Sizes &sizes);
 #emit
     template<class T> const T *get(cstring name) const { return scope.get<T>(name); }
 #end

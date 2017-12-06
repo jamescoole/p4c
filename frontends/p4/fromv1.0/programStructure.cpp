@@ -507,16 +507,16 @@ void ProgramStructure::include(cstring filename, cstring ppoptions) {
     options.file = path.toString();
     if (FILE* file = options.preprocess()) {
         if (!::errorCount()) {
-            auto code = P4::P4ParserDriver::parse(file, options.file);
+            auto code = P4::P4ParserDriver::parse(file, options.file, 1);
             if (code && !::errorCount())
                 for (auto decl : code->declarations)
                     declarations->push_back(decl); }
         options.closeInput(file); }
 }
 
-void ProgramStructure::loadModel() {
+void ProgramStructure::loadModel(cstring ppoptions) {
     // This includes in turn core.p4
-    include("v1model.p4");
+    include("v1model.p4", ppoptions);
 }
 
 namespace {

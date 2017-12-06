@@ -99,10 +99,11 @@ class P4ParserDriver final : public AbstractParserDriver {
      *                    set the initial source location.
      * @returns a P4Program object if parsing was successful, or null otherwise.
      */
-    static const IR::P4Program* parse(std::istream& in, const char* sourceFile,
-                                      unsigned sourceLine = 1);
-    static const IR::P4Program* parse(FILE* in, const char* sourceFile,
-                                      unsigned sourceLine = 1);
+    static const IR::P4Program* parse(std::istream& in,
+                                      const char* sourceFile, unsigned sourceLine);
+    
+    static const IR::P4Program* parse(FILE* in,
+                                      const char* sourceFile, unsigned sourceLine);
 
  protected:
     friend class P4::P4Lexer;
@@ -172,10 +173,12 @@ class V1ParserDriver final : public P4::AbstractParserDriver {
      *                    set the initial source location.
      * @returns a V1Program object if parsing was successful, or null otherwise.
      */
-    static const IR::V1Program* parse(std::istream& in, const char* sourceFile,
-                                      unsigned sourceLine = 1);
-    static const IR::V1Program* parse(FILE* in, const char* sourceFile,
-                                      unsigned sourceLine = 1);
+    static const IR::V1Program* parse(std::istream& in,
+                                      const char* sourceFile, unsigned sourceLine,
+                                      const IR::V1Program::Sizes &sizes);
+    static const IR::V1Program* parse(FILE* in,
+                                      const char* sourceFile, unsigned sourceLine,
+                                      const IR::V1Program::Sizes &sizes);
 
  protected:
     friend class V1::V1Lexer;
@@ -223,7 +226,7 @@ class V1ParserDriver final : public P4::AbstractParserDriver {
     /// The currently active pragmas.
     IR::Vector<IR::Annotation> currentPragmas;
 
-    V1ParserDriver();
+    V1ParserDriver(const IR::V1Program::Sizes &sizes);
 };
 
 }  // namespace V1

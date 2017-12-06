@@ -31,17 +31,17 @@ namespace P4 {
 
 template <typename Input>
 static const IR::P4Program*
-parseV1Program(Input& stream, const char* sourceFile, unsigned sourceLine,
-               boost::optional<DebugHook> debugHook = boost::none) {
+parseV1Program(Input& stream,
+               const char* sourceFile, unsigned sourceLine,
+               const CompilerOptions &options) {
     // We load the model before parsing the input file, so that the SourceInfo
     // in the model comes first.
     P4V1::Converter converter;
-    if (debugHook) converter.addDebugHook(*debugHook);
-    converter.loadModel();
+    if (options.getDebugHook()) converter.addDebugHook(options.getDebugHook());
+    converter.loadModel(options.preprocessor_options);
 
     // Parse.
-    const IR::Node* v1 = V1::V1ParserDriver::parse(stream, sourceFile,
-                                                   sourceLine);
+    const IR::Node* v1 = V1::V1ParserDriver::parse(stream, sourceFile, sourceLine, options.v1Sizes);
     if (::errorCount() > 0 || v1 == nullptr)
         return nullptr;
 
@@ -75,8 +75,8 @@ const IR::P4Program* parseP4File(CompilerOptions& options) {
     }
 
     auto result = options.isv1()
-                ? parseV1Program(in, options.file, 1, options.getDebugHook())
-                : P4ParserDriver::parse(in, options.file);
+                ? parseV1Program(in, options.file, 1, options)
+                : P4ParserDriver::parse(in, options.file, 1);
     options.closeInput(in);
 
     if (::errorCount() > 0) {
@@ -90,9 +90,11 @@ const IR::P4Program* parseP4File(CompilerOptions& options) {
 const IR::P4Program* parseP4String(const char* sourceFile, unsigned sourceLine,
                                    const std::string& input,
                                    CompilerOptions::FrontendVersion version) {
+    CompilerOptions options;
+
     std::istringstream stream(input);
     auto result = version == CompilerOptions::FrontendVersion::P4_14
-                ? parseV1Program(stream, sourceFile, sourceLine)
+                ? parseV1Program(stream, sourceFile, sourceLine, options)
                 : P4ParserDriver::parse(stream, sourceFile, sourceLine);
 
     if (::errorCount() > 0) {
