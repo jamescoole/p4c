@@ -546,6 +546,8 @@ class DiscoverStructure : public Inspector {
     explicit DiscoverStructure(ProgramStructure* structure) : structure(structure)
     { CHECK_NULL(structure); setName("DiscoverStructure"); }
 
+    void postorder(const IR::ParserException* ex) override
+    { ::warning("%1%: parser exception is not translated to P4-16", ex); }
     void postorder(const IR::Metadata* md) override
     { structure->metadata.emplace(md); checkReserved(md, md->name, "metadata"); }
     void postorder(const IR::Header* hd) override
@@ -582,6 +584,8 @@ class DiscoverStructure : public Inspector {
     { structure->extern_types.emplace(ext); checkReserved(ext, ext->name); }
     void postorder(const IR::Declaration_Instance *ext) override
     { structure->externs.emplace(ext); checkReserved(ext, ext->name); }
+    void postorder(const IR::ParserValueSet* pvs) override
+    { structure->value_sets.emplace(pvs); checkReserved(pvs, pvs->name); }
 };
 
 class ComputeCallGraph : public Inspector {
@@ -590,23 +594,7 @@ class ComputeCallGraph : public Inspector {
  public:
     explicit ComputeCallGraph(ProgramStructure* structure) : structure(structure)
     { CHECK_NULL(structure); setName("ComputeCallGraph"); }
-    void postorder(const IR::Apply* apply) override {
-        LOG3("Scanning " << apply->name);
-        auto tbl = structure->tables.get(apply->name.name);
-        if (tbl == nullptr)
-            ::error("Could not find table %1%", apply->name);
-        auto parent = findContext<IR::V1Control>();
-        BUG_CHECK(parent != nullptr, "%1%: Apply not within a control block?", apply);
-        auto ctrl = get(structure->tableMapping, tbl);
-        if (ctrl != nullptr && ctrl != parent) {
-            auto previous = get(structure->tableInvocation, tbl);
-            ::error("Table %1% invoked from two different controls: %2% and %3%",
-                    tbl, apply, previous);
-        }
-        LOG3("Invoking " << tbl << " in " << parent->name);
-        structure->tableMapping.emplace(tbl, parent);
-        structure->tableInvocation.emplace(tbl, apply);
-    }
+
     void postorder(const IR::V1Parser* parser) override {
         LOG3("Scanning parser " << parser->name);
         structure->parsers.add(parser->name);
@@ -713,6 +701,45 @@ class ComputeCallGraph : public Inspector {
             structure->calledRegisters.calls(caller, reg->name.name);
         else if (auto ext = gref->obj->to<IR::Declaration_Instance>())
             structure->calledExterns.calls(caller, ext->name.name);
+    }
+};
+
+/// Table call graph should be built after the control call graph is built.
+/// In the case that the program contains an unused control block, the
+/// table invocation in the unused control block should not be considered.
+class ComputeTableCallGraph : public Inspector {
+    ProgramStructure *structure;
+
+ public:
+    explicit ComputeTableCallGraph(ProgramStructure *structure) : structure(structure) {
+        CHECK_NULL(structure);
+        setName("ComputeTableCallGraph");
+    }
+
+    void postorder(const IR::Apply *apply) override {
+        LOG3("Scanning " << apply->name);
+        auto tbl = structure->tables.get(apply->name.name);
+        if (tbl == nullptr)
+            ::error("Could not find table %1%", apply->name);
+        auto parent = findContext<IR::V1Control>();
+        ERROR_CHECK(parent != nullptr, "%1%: Apply not within a control block?", apply);
+
+        auto ctrl = get(structure->tableMapping, tbl);
+
+        // skip control block that is unused.
+        if (!structure->calledControls.isCallee(parent->name) &&
+            parent->name != P4V1::V1Model::instance.ingress.name &&
+            parent->name != P4V1::V1Model::instance.egress.name )
+            return;
+
+        if (ctrl != nullptr && ctrl != parent) {
+            auto previous = get(structure->tableInvocation, tbl);
+            ::error("Table %1% invoked from two different controls: %2% and %3%",
+                    tbl, apply, previous);
+        }
+        LOG3("Invoking " << tbl << " in " << parent->name);
+        structure->tableMapping.emplace(tbl, parent);
+        structure->tableInvocation.emplace(tbl, apply);
     }
 };
 
@@ -1020,15 +1047,42 @@ class DetectDuplicates: public Inspector {
     }
 };
 
+// The fields in standard_metadata in v1model.p4 should only be used if
+// the source program is written in P4-16. Therefore we remove those
+// fields from the translated P4-14 program.
+class RemoveAnnotatedFields : public Transform {
+ public:
+    RemoveAnnotatedFields() { setName("RemoveAnnotatedFields"); }
+    const IR::Node* postorder(IR::Type_Struct* node) override {
+        if (node->name == "standard_metadata_t") {
+            auto fields = new IR::IndexedVector<IR::StructField>();
+            for (auto f : node->fields) {
+                if (!f->getAnnotation("alias")) {
+                    fields->push_back(f);
+                }
+            }
+            return new IR::Type_Struct(node->srcInfo, node->name, node->annotations, *fields);
+        }
+        return node;
+    }
+};
+
 }  // namespace
 
 
 
 ///////////////////////////////////////////////////////////////
 
+static ProgramStructure *defaultCreateProgramStructure() {
+    return new ProgramStructure();
+}
+
+ProgramStructure *(*Converter::createProgramStructure)() = defaultCreateProgramStructure;
+
 Converter::Converter() {
     setStopOnError(true); setName("Converter");
-    structure.populateOutputNames();
+    structure = createProgramStructure();
+    structure->populateOutputNames();
 
     // Discover types using P4-14 type-checker
     passes.emplace_back(new DetectDuplicates());
@@ -1037,10 +1091,12 @@ Converter::Converter() {
     passes.emplace_back(new AdjustLengths());
     passes.emplace_back(new TypeCheck());
     // Convert
-    passes.emplace_back(new DiscoverStructure(&structure));
-    passes.emplace_back(new ComputeCallGraph(&structure));
-    passes.emplace_back(new Rewriter(&structure));
-    passes.emplace_back(new FixExtracts(&structure));
+    passes.emplace_back(new DiscoverStructure(structure));
+    passes.emplace_back(new ComputeCallGraph(structure));
+    passes.emplace_back(new ComputeTableCallGraph(structure));
+    passes.emplace_back(new Rewriter(structure));
+    passes.emplace_back(new FixExtracts(structure));
+    passes.emplace_back(new RemoveAnnotatedFields);
 }
 
 Visitor::profile_t Converter::init_apply(const IR::Node* node) {

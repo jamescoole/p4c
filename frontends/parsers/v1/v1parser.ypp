@@ -177,11 +177,11 @@ typedef const IR::Type ConstType;
 %right ASSIGN
 %left OR
 %left AND
+%left EQ NE
+%left L_ANGLE R_ANGLE LE GE
 %left BIT_OR
 %left BIT_XOR
 %left BIT_AND
-%left EQ NE
-%left L_ANGLE R_ANGLE LE GE
 %left SHL SHR
 %left PLUS MINUS
 %left MUL DIV MOD
@@ -268,10 +268,13 @@ header_type_declaration: HEADER_TYPE name "{" header_dec_body "}"
                                 new IR::Annotations(*$4.annotations), *$4.fields),
             new IR::Type_Header(@1+@5, IR::ID(@2, $2),
                                 new IR::Annotations(*$4.annotations), *$4.fields))); }
+    | HEADER_TYPE name "{" header_dec_body error END
+          { driver.clearPragmas(); }
 ;
 
 header_dec_body: FIELDS "{" field_declarations "}" opt_length opt_max_length
       { $$ = $3; }
+    | FIELDS "{" field_declarations error END { $$ = $3; }
 ;
 
 field_declarations: /* epsilon */
@@ -393,6 +396,7 @@ field_list_entries:
 field_list_calculation_declaration:
       FIELD_LIST_CALCULATION name "{" field_list_calculation_body "}"
       { $4->name = IR::ID(@2, $2); $4->srcInfo = @1 + @5; driver.global->add($2, $4); }
+    | FIELD_LIST_CALCULATION name "{" field_list_calculation_body error END
 ;
 
 field_list_calculation_body: /* epsilon */
@@ -404,7 +408,11 @@ field_list_calculation_body: /* epsilon */
     | field_list_calculation_body ALGORITHM ":" name ";"
       { if ($1->algorithm)
             ::error("%s: multiple 'algorithm' in field_list_calculation", @2);
-        ($$=$1)->algorithm = IR::ID(@4, $4); }
+        ($$=$1)->algorithm = new IR::NameList(@4, IR::ID(@4, $4)); }
+    | field_list_calculation_body ALGORITHM "{" action_list "}"
+      { if ($1->algorithm)
+            ::error("%s: multiple 'algorithm' in field_list_calculation", @2);
+        ($$=$1)->algorithm = $4; }
     | field_list_calculation_body OUTPUT_WIDTH ":" const_expression ";"
       { if ($1->output_width)
             ::error("%s: multiple 'output_width' in field_list_calculation", @2);
@@ -422,6 +430,7 @@ field_list_list: /* epsilon */
 calculated_field_declaration:
       CALCULATED_FIELD field_ref "{" update_verify_spec_list "}"
       { $4->field = $2; $4->srcInfo = @1 + @5; driver.global->add($2->toString(), $4); }
+    | CALCULATED_FIELD field_ref "{" update_verify_spec_list error END
 ;
 
 update_verify_spec_list: /* epsilon */
@@ -453,15 +462,16 @@ value_set_declaration:
 parser_function_declaration:
       PARSER name "{" parser_statement_list "}"
       { $4->name = IR::ID(@2, $2); $4->srcInfo = @1 + @5; driver.global->add($2, $4); }
+    | PARSER name "{" parser_statement_list error END
 ;
 
 parser_statement_list: /* epsilon */
       { $$ = new IR::V1Parser(driver.takePragmasAsAnnotations()); }
     | parser_statement_list EXTRACT "(" header_ref ")" ";"
       { ($$=$1)->stmts.push_back(new IR::Primitive(@2+@5, $2, $4)); }
-    | parser_statement_list SET_METADATA "(" field_ref "," expression ")" ";"
+    | parser_statement_list SET_METADATA "(" expression "," expression ")" ";"
       { ($$=$1)->stmts.push_back(new IR::Primitive(@2+@7, $2, $4, $6)); }
-    | parser_statement_list field_ref "=" expression ";"
+    | parser_statement_list expression "=" expression ";"
       { ($$=$1)->stmts.push_back(new IR::Primitive(@3, "set_metadata", $2, $4)); }
     | parser_statement_list RETURN name ";"
       { ($$=$1)->default_return = IR::ID(@3, $3); }
@@ -503,8 +513,11 @@ case_value:
 /*************************/
 
 parser_exception_declaration:
-      PARSER_EXCEPTION name "{" parser_statement_list "}"
-        { driver.clearPragmas(); }
+      PARSER_EXCEPTION name "{" parser_statement_list "}" {
+          driver.clearPragmas();
+          ::warning("%1%: parser exception is not translated to P4-16", $1);
+      }
+    | PARSER_EXCEPTION name "{" parser_statement_list error END
 ;
 
 /*****************/
@@ -513,6 +526,7 @@ parser_exception_declaration:
 
 counter_declaration: COUNTER name "{" counter_spec_list "}"
       { $4->name = IR::ID(@2, $2); $4->srcInfo = @1 + @5; driver.global->add($2, $4); }
+    | COUNTER name "{" counter_spec_list error END
 ;
 
 counter_spec_list:
@@ -547,6 +561,7 @@ counter_spec_list:
 meter_declaration : METER name "{" meter_spec_list "}"
       { $4->name = IR::ID(@2, $2); $4->srcInfo = @1 + @5;
         driver.global->add($2, $4); }
+    | METER name "{" meter_spec_list error END
 ;
 
 meter_spec_list:
@@ -582,6 +597,7 @@ register_declaration: REGISTER name "{" register_spec_list "}"
       { $4->name = IR::ID(@2, $2);
         $4->srcInfo = @1 + @5;
         driver.global->add($2, $4); }
+    | REGISTER name "{" register_spec_list error END
 ;
 
 register_spec_list:
@@ -645,7 +661,7 @@ action_function_declaration:
 
 action_function_body:
       "{" action_statement_list "}"        { $$ = $2; }
-    | "{" action_statement_list error "}"  { $$ = $2; }
+    | "{" action_statement_list error END  { $$ = $2; }
 ;
 
 action_statement_list: /* epsilon */
@@ -657,6 +673,8 @@ action_statement_list: /* epsilon */
     | action_statement_list field_ref "(" opt_expression_list ")" ";"
       { ($$ = $1)->action.push_back(new IR::Primitive(@2+@5, $2->member, $2->expr, $4)); }
     | action_statement_list error ";"
+      { $$ = $1; }
+    | action_statement_list error
       { $$ = $1; }
 ;
 
@@ -697,11 +715,14 @@ table_declaration: TABLE name "{" table_body "}"
       { $4->name = IR::ID(@2, $2);
         $4->srcInfo = @1 + @5;
         driver.global->add($2, $4); }
+    | TABLE name "{" table_body error END
 ;
 
 table_body: /* epsilon */
       { $$ = new IR::V1Table(driver.takePragmasAsAnnotations()); }
     | table_body READS "{" field_match_list "}"
+      { ($$=$1)->reads = $4; }
+    | table_body READS "{" field_match_list error END
       { ($$=$1)->reads = $4; }
     | table_body ACTIONS "{" action_list "}"
       { ($$=$1)->actions = $4->names; $4 = nullptr; }
@@ -761,6 +782,7 @@ action_list: /* epsilon */ { $$ = new IR::NameList(); }
 control_function_declaration: CONTROL name "{" control_statement_list "}"
       { driver.global->add($2, new IR::V1Control(@1+@5, IR::ID(@2, $2), $4,
                                                  driver.takePragmasAsAnnotations())); }
+    | CONTROL name "{" control_statement_list error END
 ;
 
 control_statement_list: /* epsilon */ { $$ = new IR::Vector<IR::Expression>; }

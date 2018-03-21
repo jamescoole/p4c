@@ -26,11 +26,7 @@ Util::IJson* ParserConverter::convertParserStatement(const IR::StatOrDecl* stat)
     if (stat->is<IR::AssignmentStatement>()) {
         auto assign = stat->to<IR::AssignmentStatement>();
         auto type = typeMap->getType(assign->left, true);
-        cstring operation;
-        if (type->is<IR::Type_StructLike>())
-            operation = "assign_header";
-        else
-            operation = "set";
+        cstring operation = Backend::jsonAssignment(type, true);
         result->emplace("op", operation);
         auto l = conv->convertLeftValue(assign->left);
         bool convertBool = type->is<IR::Type_Boolean>();
@@ -38,7 +34,7 @@ Util::IJson* ParserConverter::convertParserStatement(const IR::StatOrDecl* stat)
         params->append(l);
         params->append(r);
 
-        if (operation == "assign_header") {
+        if (operation != "set") {
             // must wrap into another outer object
             auto wrap = new Util::JsonObject();
             wrap->emplace("op", "primitive");
@@ -204,7 +200,8 @@ void ParserConverter::convertSimpleKey(const IR::Expression* keySet,
 
 unsigned ParserConverter::combine(const IR::Expression* keySet,
                                 const IR::ListExpression* select,
-                                mpz_class& value, mpz_class& mask) const {
+                                mpz_class& value, mpz_class& mask,
+                                bool& is_vset, cstring& vset_name) const {
     // From the BMv2 spec: For values and masks, make sure that you
     // use the correct format. They need to be the concatenation (in
     // the right order) of all byte padded fields (padded with 0
@@ -216,6 +213,7 @@ unsigned ParserConverter::combine(const IR::Expression* keySet,
     // Return width in bytes
     value = 0;
     mask = 0;
+    is_vset = false;
     unsigned totalWidth = 0;
     if (keySet->is<IR::DefaultExpression>()) {
         return totalWidth;
@@ -253,12 +251,18 @@ unsigned ParserConverter::combine(const IR::Expression* keySet,
             }
             mask = Util::shift_left(mask, w) + mask_value;
             LOG3("Shifting " << " into key " << key_value << " &&& " << mask_value <<
-                 " result is " << value << " &&& " << mask);
+                             " result is " << value << " &&& " << mask);
             index++;
         }
 
         if (noMask)
             mask = -1;
+        return totalWidth;
+    } else if (keySet->is<IR::PathExpression>()) {
+        auto pe = keySet->to<IR::PathExpression>();
+        auto decl = refMap->getDeclaration(pe->path, true);
+        vset_name = decl->controlPlaneName();
+        is_vset = true;
         return totalWidth;
     } else {
         BUG_CHECK(select->components.size() == 1, "%1%: mismatched select/label", select);
@@ -286,18 +290,28 @@ ParserConverter::convertSelectExpression(const IR::SelectExpression* expr) {
     for (auto sc : se->selectCases) {
         auto trans = new Util::JsonObject();
         mpz_class value, mask;
-        unsigned bytes = combine(sc->keyset, se->select, value, mask);
-        if (mask == 0) {
-            trans->emplace("value", "default");
-            trans->emplace("mask", Util::JsonValue::null);
+        bool is_vset;
+        cstring vset_name;
+        unsigned bytes = combine(sc->keyset, se->select, value, mask, is_vset, vset_name);
+        if (is_vset) {
+            trans->emplace("type", "parse_vset");
+            trans->emplace("value", vset_name);
+            trans->emplace("mask", mask);
             trans->emplace("next_state", stateName(sc->state->path->name));
         } else {
-            trans->emplace("value", stringRepr(value, bytes));
-            if (mask == -1)
+            if (mask == 0) {
+                trans->emplace("value", "default");
                 trans->emplace("mask", Util::JsonValue::null);
-            else
-                trans->emplace("mask", stringRepr(mask, bytes));
-            trans->emplace("next_state", stateName(sc->state->path->name));
+                trans->emplace("next_state", stateName(sc->state->path->name));
+            } else {
+                trans->emplace("type", "hexstr");
+                trans->emplace("value", stringRepr(value, bytes));
+                if (mask == -1)
+                    trans->emplace("mask", Util::JsonValue::null);
+                else
+                    trans->emplace("mask", stringRepr(mask, bytes));
+                trans->emplace("next_state", stateName(sc->state->path->name));
+            }
         }
         result.push_back(trans);
     }
@@ -335,9 +349,13 @@ bool ParserConverter::preorder(const IR::P4Parser* parser) {
     auto parser_id = json->add_parser("parser");
 
     for (auto s : parser->parserLocals) {
-        if (s->is<IR::Declaration_Instance>()) {
-            ::error("%1%: not supported on parsers on this target", s);
-            return false;
+        if (auto inst = s->to<IR::Declaration_Variable>()) {
+            if (!inst->type->is<IR::Type_ValueSet>())
+                continue;
+            auto value_set = inst->type->to<IR::Type_ValueSet>();
+            auto bitwidth = value_set->width_bits();
+            auto name = inst->controlPlaneName();
+            json->add_parse_vset(name, bitwidth);
         }
     }
 

@@ -41,6 +41,7 @@ ProgramStructure::ProgramStructure() :
         actions(&allNames), counters(&allNames), registers(&allNames), meters(&allNames),
         action_profiles(nullptr), field_lists(nullptr), field_list_calculations(&allNames),
         action_selectors(nullptr), extern_types(&allNames), externs(&allNames),
+        value_sets(&allNames),
         calledActions("actions"), calledControls("controls"), calledCounters("counters"),
         calledMeters("meters"), calledRegisters("registers"), calledExterns("externs"),
         parsers("parsers"), parserPacketIn(nullptr), parserHeadersOut(nullptr),
@@ -387,7 +388,27 @@ explodeLabel(const IR::Constant* value, const IR::Constant* mask,
     return rv;
 }
 
-const IR::ParserState* ProgramStructure::convertParser(const IR::V1Parser* parser) {
+static const IR::Type*
+explodeType(const std::vector<int> &sizes) {
+    auto rv = new IR::Vector<IR::Type>();
+    for (auto it = sizes.begin(); it != sizes.end(); ++it) {
+        int s = *it;
+        auto type = IR::Type_Bits::get(s);
+        rv->push_back(type);
+    }
+    if (rv->size() == 1)
+        return rv->at(0);
+    return new IR::Type_Tuple(*rv);
+}
+
+/**
+ * convert a P4-14 parser to P4-16 parser state.
+ * @param parser     The P4-14 parser IR node to be converted
+ * @param stateful   If any declaration is created during the conversion, save to 'stateful'
+ * @returns          The P4-16 parser state corresponding to the P4-14 parser
+ */
+const IR::ParserState* ProgramStructure::convertParser(const IR::V1Parser* parser,
+                                    IR::IndexedVector<IR::Declaration>* stateful) {
     ExpressionConverter conv(this);
 
     latest = nullptr;
@@ -415,14 +436,31 @@ const IR::ParserState* ProgramStructure::convertParser(const IR::V1Parser* parse
             auto deststate = getState(state);
             if (deststate == nullptr)
                 return nullptr;
+
+            // discover all parser value_sets in the current parser state.
+            for (auto v : c->values) {
+                auto first = v.first->to<IR::PathExpression>();
+                if (!first) continue;
+                auto value_set = value_sets.get(first->path->name);
+                if (!value_set) {
+                    ::error("Unable to find declaration for parser_value_set %s",
+                            first->path->name);
+                    return nullptr;
+                }
+
+                auto type = new IR::Type_ValueSet(explodeType(sizes));
+                auto annos = addGlobalNameAnnotation(value_set->name, value_set->annotations);
+                auto decl = new IR::Declaration_Variable(value_set->name, annos, type);
+                stateful->push_back(decl);
+            }
             for (auto v : c->values) {
                 if (auto first = v.first->to<IR::Constant>()) {
                     auto expr = explodeLabel(first, v.second, sizes);
                     auto sc = new IR::SelectCase(c->srcInfo, expr, deststate);
                     cases.push_back(sc);
-                } else if (/*auto first = */v.first->to<IR::PathExpression>()) {
-                    // XXX(hanw): handle parser_value_set
-                    ::warning("parser_value_set is not yet implemented");
+                } else if (auto first = v.first->to<IR::PathExpression>()) {
+                    auto sc = new IR::SelectCase(c->srcInfo, first, deststate);
+                    cases.push_back(sc);
                 } else {
                     ::error("Expected constant or parser value set in %1%", v.first);
                 }
@@ -476,7 +514,7 @@ void ProgramStructure::createParser() {
     IR::IndexedVector<IR::Declaration> stateful;
     IR::IndexedVector<IR::ParserState> states;
     for (auto p : parserStates) {
-        auto ps = convertParser(p.first);
+        auto ps = convertParser(p.first, &stateful);
         if (ps == nullptr)
             return;
         states.push_back(ps);
@@ -487,6 +525,9 @@ void ProgramStructure::createParser() {
     auto result = new IR::P4Parser(v1model.parser.Id(), type, stateful, states);
     declarations->push_back(result);
     conversionContext.clear();
+
+    if (ingressReference.name.isNullOrEmpty())
+        ::error("No transition from a parser to ingress pipeline found");
 }
 
 void ProgramStructure::include(cstring filename, cstring ppoptions) {
@@ -661,7 +702,7 @@ ProgramStructure::convertActionProfile(const IR::ActionProfile* action_profile, 
     if (action_selector) {
         type = new IR::Type_Name(new IR::Path(v1model.action_selector.Id()));
         auto flc = field_list_calculations.get(action_selector->key.name);
-        auto algorithm = convertHashAlgorithm(flc->algorithm);
+        auto algorithm = convertHashAlgorithms(flc->algorithm);
         if (algorithm == nullptr)
             return nullptr;
         args->push_back(algorithm);
@@ -845,6 +886,22 @@ const IR::Expression* ProgramStructure::convertHashAlgorithm(IR::ID algorithm) {
     auto pe = new IR::TypeNameExpression(v1model.algorithm.Id());
     auto mem = new IR::Member(pe, result);
     return mem;
+}
+
+const IR::Expression* ProgramStructure::convertHashAlgorithms(const IR::NameList *algorithm) {
+    if (!algorithm || algorithm->names.empty()) return nullptr;
+    if (algorithm->names.size() > 1) {
+#if 1
+        ::warning("%s: Mulitple algorithms in a field list not supported in P4_16 -- using "
+                  "only the first", algorithm->names[0].srcInfo);
+#else
+        auto rv = new IR::ListExpression({});
+        for (auto &alg : algorithm->names)
+            rv->push_back(convertHashAlgorithm(alg));
+        return rv;
+#endif
+    }
+    return convertHashAlgorithm(algorithm->names[0]);
 }
 
 static bool sameBitsType(const IR::Type* left, const IR::Type* right) {
@@ -1162,11 +1219,33 @@ CONVERT_PRIMITIVE(mark_for_drop) {
 CONVERT_PRIMITIVE(push) {
     ExpressionConverter conv(structure);
     OPS_CK(primitive, 2);
+    auto op1 = primitive->operands.at(1);
     auto hdr = conv.convert(primitive->operands.at(0));
-    auto count = conv.convert(primitive->operands.at(1));
+    auto count = conv.convert(op1);
+    if (!count->is<IR::Constant>()) {
+        ::error("%1%: Only push with a constant value is supported", op1);
+        return new IR::EmptyStatement(primitive->srcInfo);
+    }
+    auto cst = count->to<IR::Constant>();
+    auto number = cst->asInt();
+    if (number < 0) {
+        ::error("%1%: push requires a positive amount", op1);
+        return new IR::EmptyStatement(primitive->srcInfo);
+    }
+    if (number > 0xFFFF) {
+        ::error("%1%: push amount is too large", op1);
+        return new IR::EmptyStatement(primitive->srcInfo);
+    }
+    IR::IndexedVector<IR::StatOrDecl> block;
     auto methodName = IR::Type_Stack::push_front;
     auto method = new IR::Member(hdr, IR::ID(methodName));
-    return new IR::MethodCallStatement(primitive->srcInfo, method, { count });
+    block.push_back(new IR::MethodCallStatement(primitive->srcInfo, method, { count }));
+    for (int i = 0; i < number; i++) {
+        auto elemi = new IR::ArrayIndex(primitive->srcInfo, hdr, new IR::Constant(i));
+        auto setValid = new IR::Member(elemi, IR::ID(IR::Type_Header::setValid));
+        block.push_back(new IR::MethodCallStatement(primitive->srcInfo, setValid, {}));
+    }
+    return new IR::BlockStatement(primitive->srcInfo, std::move(block));
 }
 CONVERT_PRIMITIVE(pop) {
     ExpressionConverter conv(structure);
@@ -1204,34 +1283,30 @@ CONVERT_PRIMITIVE(modify_field_from_rng) {
     BUG_CHECK(primitive->operands.size() == 2 || primitive->operands.size() == 3,
               "Expected 2 or 3 operands for %1%", primitive);
     auto field = conv.convert(primitive->operands.at(0));
+    auto dest = field;
     auto logRange = conv.convert(primitive->operands.at(1));
     const IR::Expression* mask = nullptr;
-    if (primitive->operands.size() == 3)
+    auto block = new IR::BlockStatement;
+    if (primitive->operands.size() == 3) {
         mask = conv.convert(primitive->operands.at(2));
-
-    cstring tmpvar = structure->makeUniqueName("tmp");
-    auto decl = new IR::Declaration_Variable(tmpvar, structure->v1model.random.resultType);
+        cstring tmpvar = structure->makeUniqueName("tmp");
+        auto decl = new IR::Declaration_Variable(tmpvar, field->type);
+        block->push_back(decl);
+        dest = new IR::PathExpression(field->type, new IR::Path(tmpvar)); }
     auto args = new IR::Vector<IR::Expression>();
-    args->push_back(new IR::PathExpression(tmpvar));
+    args->push_back(dest);
     args->push_back(new IR::Constant(primitive->operands.at(1)->srcInfo,
-                                     structure->v1model.random.resultType, 0));
+                                     field->type, 0));
     auto one = new IR::Constant(primitive->operands.at(1)->srcInfo, 1);
-    args->push_back(new IR::Cast(primitive->operands.at(1)->srcInfo,
-                                 structure->v1model.random.resultType,
+    args->push_back(new IR::Cast(primitive->operands.at(1)->srcInfo, field->type,
                                  new IR::Sub(new IR::Shl(one, logRange), one)));
     auto random = new IR::PathExpression(structure->v1model.random.Id());
     auto mc = new IR::MethodCallExpression(primitive->srcInfo, random, args);
     auto call = new IR::MethodCallStatement(primitive->srcInfo, mc);
-    auto block = new IR::BlockStatement;
-    const IR::Statement* assgn;
-    if (mask != nullptr)
-        assgn = structure->sliceAssign(primitive->srcInfo, field,
-                             new IR::PathExpression(IR::ID(tmpvar)), mask);
-    else
-        assgn = new IR::AssignmentStatement(field, new IR::PathExpression(tmpvar));
-    block->push_back(decl);
     block->push_back(call);
-    block->push_back(assgn);
+    if (mask != nullptr) {
+        auto assgn = structure->sliceAssign(primitive->srcInfo, field, dest->clone(), mask);
+        block->push_back(assgn); }
     return block;
 }
 
@@ -1241,14 +1316,12 @@ CONVERT_PRIMITIVE(modify_field_rng_uniform) {
     auto field = conv.convert(primitive->operands.at(0));
     auto lo = conv.convert(primitive->operands.at(1));
     auto hi = conv.convert(primitive->operands.at(2));
-    auto args = new IR::Vector<IR::Expression>();
-    args->push_back(field);
-    args->push_back(new IR::Cast(primitive->operands.at(1)->srcInfo,
-                                 structure->v1model.random.resultType, lo));
-    args->push_back(new IR::Cast(primitive->operands.at(1)->srcInfo,
-                                 structure->v1model.random.resultType, hi));
+    if (lo->type != field->type)
+        lo = new IR::Cast(primitive->operands.at(1)->srcInfo, field->type, lo);
+    if (hi->type != field->type)
+        hi = new IR::Cast(primitive->operands.at(2)->srcInfo, field->type, hi);
     auto random = new IR::PathExpression(structure->v1model.random.Id());
-    auto mc = new IR::MethodCallExpression(primitive->srcInfo, random, args);
+    auto mc = new IR::MethodCallExpression(primitive->srcInfo, random, { field, lo, hi });
     auto call = new IR::MethodCallStatement(primitive->srcInfo, mc);
     return call;
 }
@@ -1363,7 +1436,7 @@ CONVERT_PRIMITIVE(modify_field_with_hash_based_offset) {
         return nullptr;
     auto list = conv.convert(fl);
 
-    auto algorithm = structure->convertHashAlgorithm(flc->algorithm);
+    auto algorithm = structure->convertHashAlgorithms(flc->algorithm);
     args->push_back(dest);
     args->push_back(algorithm);
     args->push_back(new IR::Cast(ttype, base));
@@ -1833,7 +1906,9 @@ ProgramStructure::convertControl(const IR::V1Control* control, cstring newName) 
     for (auto c : registersToDo) {
         auto reg = registers.get(c);
         auto r = convert(reg, registers.get(reg));
-        stateful.push_back(r);
+        if (!declarations->getDeclaration(r->name)) {
+            declarations->push_back(r);
+        }
     }
 
     for (auto c : externsToDo) {
@@ -1925,6 +2000,12 @@ void ProgramStructure::createControls() {
 
     for (auto c : controlsToDo) {
         auto ct = controls.get(c);
+        /// do not convert control block if it is not invoked
+        /// by other control block and it is not ingress or egress.
+        if (!calledControls.isCallee(c) &&
+            ct != controls.get(v1model.ingress.name) &&
+            ct != controls.get(v1model.egress.name))
+            continue;
         auto ctrl = convertControl(ct, controls.get(ct));
         if (ctrl == nullptr)
             return;
@@ -2008,6 +2089,7 @@ const IR::FieldList* ProgramStructure::getFieldLists(const IR::FieldListCalculat
             return nullptr;
         }
         result->fields.insert(result->fields.end(), fl->fields.begin(), fl->fields.end());
+        result->payload = result->payload || fl->payload;
         /* FIXME -- do something with fl->annotations? */
     }
     return result;
@@ -2046,14 +2128,16 @@ void ProgramStructure::createChecksumVerifications() {
             auto fl = getFieldLists(flc);
             if (fl == nullptr) continue;
             auto le = conv.convert(fl);
-            auto method = new IR::PathExpression(v1model.verify_checksum.Id());
+            IR::ID methodName = fl->payload ? v1model.verify_checksum_with_payload.Id() :
+                                v1model.verify_checksum.Id();
+            auto method = new IR::PathExpression(methodName);
             auto args = new IR::Vector<IR::Expression>();
             const IR::Expression* condition;
             if (uov.cond != nullptr)
                 condition = conv.convert(uov.cond);
             else
                 condition = new IR::BoolLiteral(true);
-            auto algo = convertHashAlgorithm(flc->algorithm);
+            auto algo = convertHashAlgorithms(flc->algorithm);
             args->push_back(condition);
             args->push_back(le);
             args->push_back(dest);
@@ -2075,7 +2159,7 @@ void ProgramStructure::createChecksumUpdates() {
     auto params = new IR::ParameterList;
     auto headpath = new IR::Path(v1model.headersType.Id());
     auto headtype = new IR::Type_Name(headpath);
-    auto headers = new IR::Parameter(v1model.update.headersParam.Id(),
+    auto headers = new IR::Parameter(v1model.compute.headersParam.Id(),
                                      IR::Direction::InOut, headtype);
     params->push_back(headers);
     conversionContext.header = paramReference(headers);
@@ -2089,7 +2173,7 @@ void ProgramStructure::createChecksumUpdates() {
 
     conversionContext.standardMetadata = nullptr;
 
-    auto type = new IR::Type_Control(v1model.update.Id(), params);
+    auto type = new IR::Type_Control(v1model.compute.Id(), params);
     auto body = new IR::BlockStatement;
     for (auto cf : calculated_fields) {
         LOG3("Conveting " << cf);
@@ -2102,14 +2186,16 @@ void ProgramStructure::createChecksumUpdates() {
             if (fl == nullptr) continue;
             auto le = conv.convert(fl);
 
-            auto method = new IR::PathExpression(v1model.update_checksum.Id());
+            IR::ID methodName = fl->payload ? v1model.update_checksum_with_payload.Id() :
+                                v1model.update_checksum.Id();
+            auto method = new IR::PathExpression(methodName);
             auto args = new IR::Vector<IR::Expression>();
             const IR::Expression* condition;
             if (uov.cond != nullptr)
                 condition = conv.convert(uov.cond);
             else
                 condition = new IR::BoolLiteral(true);
-            auto algo = convertHashAlgorithm(flc->algorithm);
+            auto algo = convertHashAlgorithms(flc->algorithm);
 
             args->push_back(condition);
             args->push_back(le);
@@ -2121,7 +2207,7 @@ void ProgramStructure::createChecksumUpdates() {
         }
     }
     updateChecksums = new IR::P4Control(
-        v1model.update.Id(), type, IR::IndexedVector<IR::Declaration>(), body);
+        v1model.compute.Id(), type, IR::IndexedVector<IR::Declaration>(), body);
     declarations->push_back(updateChecksums);
     conversionContext.clear();
 }
@@ -2174,7 +2260,9 @@ void ProgramStructure::populateOutputNames() {
         "selector",
         // v1model externs
         "verify_checksum",
+        "verify_checksum_with_payload",
         "update_checksum",
+        "update_checksum_with_payload",
         "CounterType",
         "MeterType",
         "HashAlgorithm",

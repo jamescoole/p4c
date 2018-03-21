@@ -53,12 +53,14 @@ struct standard_metadata_t {
     @alias("queueing_metadata.deq_qdepth")    bit<19> deq_qdepth;
     // intrinsic metadata
     @alias("intrinsic_metadata.ingress_global_timestamp") bit<48> ingress_global_timestamp;
+    @alias("intrinsic_metadata.egress_global_timestamp") bit<48> egress_global_timestamp;
     @alias("intrinsic_metadata.lf_field_list") bit<32> lf_field_list;
     @alias("intrinsic_metadata.mcast_grp")     bit<16> mcast_grp;
-    @alias("intrinsic_metadata.resubmit_flag") bit<1>  resubmit_flag;
+    @alias("intrinsic_metadata.resubmit_flag") bit<32> resubmit_flag;
     @alias("intrinsic_metadata.egress_rid")    bit<16> egress_rid;
     /// Indicates that a verify_checksum() method has failed.
     bit<1>  checksum_error;
+    @alias("intrinsic_metadata.recirculate_flag") bit<32> recirculate_flag;
 }
 
 enum CounterType {
@@ -104,7 +106,7 @@ extern action_profile {
 }
 
 // Get a random number in the range lo..hi
-extern void random(out bit<32> result, in bit<32> lo, in bit<32> hi);
+extern void random<T>(out T result, in T lo, in T hi);
 // If the type T is a named struct, the name is used
 // to generate the control-plane API.
 extern void digest<T>(in bit<32> receiver, in T data);
@@ -165,20 +167,41 @@ Computes the checksum of the supplied data.
 */
 extern void update_checksum<T, O>(in bool condition, in T data, inout O checksum, HashAlgorithm algo);
 
+/**
+Verifies the checksum of the supplied data including the payload.
+The payload is defined as "all bytes of the packet which were not parsed by the parser".
+If this method detects that a checksum of the data is not correct it
+sets the standard_metadata checksum_error bit.
+@param T          Must be a tuple type where all the fields are bit-fields or varbits.
+                  The total dynamic length of the fields is a multiple of the output size.
+@param O          Checksum type; must be bit<X> type.
+@param condition  If 'false' the verification always succeeds.
+@param data       Data whose checksum is verified.
+@param checksum   Expected checksum of the data; note that is must be a left-value.
+@param algo       Algorithm to use for checksum (not all algorithms may be supported).
+                  Must be a compile-time constant.
+*/
+extern void verify_checksum_with_payload<T, O>(in bool condition, in T data, inout O checksum, HashAlgorithm algo);
+/**
+Computes the checksum of the supplied data including the payload.
+The payload is defined as "all bytes of the packet which were not parsed by the parser".
+@param T          Must be a tuple type where all the fields are bit-fields or varbits.
+                  The total dynamic length of the fields is a multiple of the output size.
+@param O          Output type; must be bit<X> type.
+@param condition  If 'false' the checksum is not changed
+@param data       Data whose checksum is computed.
+@param checksum   Checksum of the data.
+@param algo       Algorithm to use for checksum (not all algorithms may be supported).
+                  Must be a compile-time constant.
+*/
+extern void update_checksum_with_payload<T, O>(in bool condition, in T data, inout O checksum, HashAlgorithm algo);
+
 extern void resubmit<T>(in T data);
 extern void recirculate<T>(in T data);
 extern void clone(in CloneType type, in bit<32> session);
 extern void clone3<T>(in CloneType type, in bit<32> session, in T data);
 
 extern void truncate(in bit<32> length);
-
-// Parser value set
-// The parser value set implements a run-time updatable values that is used to
-// determine parser transition
-extern value_set<D> {
-    value_set(bit<8> size);
-    bool is_member(in D data);
-}
 
 // The name 'standard_metadata' is reserved
 
@@ -189,11 +212,12 @@ extern value_set<D> {
 parser Parser<H, M>(packet_in b,
                     out H parsedHdr,
                     inout M meta,
-inout standard_metadata_t standard_metadata);
+                    inout standard_metadata_t standard_metadata);
 
 /* The only legal statements in the implementation of the
 VerifyChecksum control are: block statements, calls to the
-verify_checksum method, and return statements. */
+verify_checksum and verify_checksum_with_payload methods,
+and return statements. */
 control VerifyChecksum<H, M>(inout H hdr,
                              inout M meta);
 @pipeline
@@ -207,7 +231,8 @@ control Egress<H, M>(inout H hdr,
 
 /* The only legal statements in the implementation of the
 ComputeChecksum control are: block statements, calls to the
-update_checksum method, and return statements. */
+update_checksum and update_checksum_with_payload methods,
+and return statements. */
 control ComputeChecksum<H, M>(inout H hdr,
                               inout M meta);
 @deparser

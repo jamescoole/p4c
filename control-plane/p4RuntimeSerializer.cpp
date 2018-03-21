@@ -45,14 +45,8 @@ limitations under the License.
 #include "lib/log.h"
 #include "lib/nullstream.h"
 #include "lib/ordered_set.h"
-#include "midend/actionsInlining.h"
-#include "midend/dontcareArgs.h"
 #include "midend/eliminateTuples.h"
-#include "midend/inlining.h"
-#include "midend/localizeActions.h"
-#include "midend/moveConstructors.h"
 #include "midend/removeParameters.h"
-#include "midend/removeReturns.h"
 #include "midend/synthesizeValidField.h"
 #include "PI/pi_base.h"
 
@@ -542,7 +536,8 @@ enum class P4RuntimeSymbolType {
     EXTERN,
     EXTERN_INSTANCE,
     METER,
-    TABLE
+    TABLE,
+    VALUE_SET
 };
 
 /**
@@ -863,6 +858,8 @@ class P4RuntimeSymbolTable {
 
             case P4RuntimeSymbolType::METER: return PI_METER_ID;
             case P4RuntimeSymbolType::TABLE: return PI_TABLE_ID;
+            // XXX(antonin): reserve 0x03 for value sets
+            case P4RuntimeSymbolType::VALUE_SET: return 0x03;
         }
         BUG("Unexpected P4RuntimeSymbolType");  // Unreachable.
     }
@@ -882,7 +879,8 @@ class P4RuntimeSymbolTable {
         { P4RuntimeSymbolType::EXTERN, SymbolTable() },
         { P4RuntimeSymbolType::EXTERN_INSTANCE, SymbolTable() },
         { P4RuntimeSymbolType::METER, SymbolTable() },
-        { P4RuntimeSymbolType::TABLE, SymbolTable() }
+        { P4RuntimeSymbolType::TABLE, SymbolTable() },
+        { P4RuntimeSymbolType::VALUE_SET, SymbolTable() }
     };
 
     // A set which contains all the symbols in the program. It's used to compute
@@ -1070,12 +1068,16 @@ class P4RuntimeAnalyzer {
             addAnnotations(param, actionParam->to<IR::IAnnotated>());
 
             auto paramType = typeMap->getType(actionParam, true);
-            if (!paramType->is<IR::Type_Bits>()) {
-                ::error("Action parameter %1% has a type which is not bit<> or int<>",
+            if (!paramType->is<IR::Type_Bits>() && !paramType->is<IR::Type_Boolean>()) {
+                ::error("Action parameter %1% has a type which is not bit<> or int<> or bool",
                         actionParam);
                 continue;
             }
-            param->set_bitwidth(paramType->width_bits());
+            if (paramType->is<IR::Type_Boolean>()) {
+                param->set_bitwidth(1);
+            } else {
+                param->set_bitwidth(paramType->width_bits());
+            }
         }
     }
 
@@ -1132,7 +1134,8 @@ class P4RuntimeAnalyzer {
                   const boost::optional<DefaultAction>& defaultAction,
                   const std::vector<ActionRef>& actions,
                   const std::vector<MatchField>& matchFields,
-                  bool supportsTimeout) {
+                  bool supportsTimeout,
+                  bool isConstTable) {
         if (isHidden(tableDeclaration)) return;
 
         auto name = tableDeclaration->controlPlaneName();
@@ -1195,6 +1198,10 @@ class P4RuntimeAnalyzer {
         if (supportsTimeout) {
             table->set_with_entry_timeout(true);
         }
+
+        if (isConstTable) {
+            table->set_is_const_table(true);
+        }
     }
 
     void addActionProfile(const ActionProfile& actionProfile,
@@ -1216,11 +1223,53 @@ class P4RuntimeAnalyzer {
         addAnnotations(profile->mutable_preamble(), actionProfile.annotations);
     }
 
+    void addValueSet(const IR::Declaration_Variable* inst) {
+        // guaranteed by caller
+        CHECK_NULL(inst);
+        BUG_CHECK(inst->type->is<IR::Type_ValueSet>(),
+                  "variable %1% is not of type value_set", inst);
+
+        auto pvsType = inst->type->to<IR::Type_ValueSet>();
+        auto bitwidth = static_cast<uint32_t>(pvsType->width_bits());
+
+        auto name = inst->controlPlaneName();
+
+        unsigned int size = 0;
+        auto sizeAnnotation = inst->getAnnotation("size");
+        if (sizeAnnotation) {
+            if (sizeAnnotation->expr.size() != 1) {
+                ::error("@size should be an integer for declaration %1%", inst);
+                return;
+            }
+            auto sizeConstant = sizeAnnotation->expr[0]->to<IR::Constant>();
+            if (sizeConstant == nullptr || !sizeConstant->fitsInt()) {
+                ::error("@size should be an integer for declaration %1%", inst);
+                return;
+            }
+            if (sizeConstant->value < 0) {
+                ::error("@size should be a positive integer for declaration %1%", inst);
+                return;
+            }
+            size = sizeConstant->value.get_ui();
+        }
+
+        auto vs = p4Info->add_value_sets();
+        auto id = symbols.getId(P4RuntimeSymbolType::VALUE_SET, name);
+        vs->mutable_preamble()->set_id(id);
+        vs->mutable_preamble()->set_name(name);
+        vs->mutable_preamble()->set_alias(symbols.getAlias(name));
+        vs->set_bitwidth(bitwidth);
+        vs->set_size(size);
+        addAnnotations(vs->mutable_preamble(), inst, [](cstring name){ return name == "size"; });
+    }
+
  private:
     /// Serialize @annotated's P4 annotations and attach them to a P4Info message
-    /// with an 'annotations' field. '@name' and '@id' are ignored.
-    template <typename Message>
-    static void addAnnotations(Message* message, const IR::IAnnotated* annotated) {
+    /// with an 'annotations' field. '@name' and '@id' are ignored, as well as
+    /// annotations whose name satisfies predicate @p.
+    template <typename Message, typename UnaryPredicate>
+    static void addAnnotations(Message* message, const IR::IAnnotated* annotated,
+                               UnaryPredicate p) {
         CHECK_NULL(message);
 
         // Synthesized resources may have no annotations.
@@ -1231,6 +1280,7 @@ class P4RuntimeAnalyzer {
             // elsewhere in P4Info messages.
             if (annotation->name == IR::Annotation::nameAnnotation) continue;
             if (annotation->name == "id") continue;
+            if (p(annotation->name)) continue;
 
             // Serialize the annotation.
             // XXX(seth): Might be nice to do something better than rely on toString().
@@ -1244,6 +1294,12 @@ class P4RuntimeAnalyzer {
 
             message->add_annotations(serializedAnnotation);
         }
+    }
+
+    /// calls addAnnotations with a unconditionally false predicate.
+    template <typename Message>
+    static void addAnnotations(Message* message, const IR::IAnnotated* annotated) {
+        addAnnotations(message, annotated, [](cstring){ return false; });
     }
 
     /// @return the P4Runtime Extern message for the extern @name, creating a
@@ -1538,6 +1594,22 @@ static void collectTableSymbols(P4RuntimeSymbolTable& symbols,
     }
 }
 
+static void collectParserSymbols(P4RuntimeSymbolTable& symbols,
+                                 const IR::ParserBlock* parserBlock) {
+    CHECK_NULL(parserBlock);
+
+    auto parser = parserBlock->container;
+    CHECK_NULL(parser);
+
+    for (auto s : parser->parserLocals) {
+        if (auto inst = s->to<IR::Declaration_Variable>()) {
+            if (!inst->type->is<IR::Type_ValueSet>())
+                continue;
+            symbols.add(P4RuntimeSymbolType::VALUE_SET, inst);
+        }
+    }
+}
+
 /// @return the header instance fields matched against by @table's key. The
 /// fields are represented as a (fully qualified field name, match type) tuple.
 static std::vector<MatchField>
@@ -1653,6 +1725,20 @@ static bool getSupportsTimeout(const IR::P4Table* table) {
     return expr->to<IR::BoolLiteral>()->value;
 }
 
+/// @return true if @table has a 'entries' property. The property must be const
+/// as per the current P4_16 specification. The frontend already enforces that
+/// check but we perform the check again here in case the constraint is relaxed
+/// in the specification in the future.
+static bool getConstTable(const IR::P4Table* table) {
+    BUG_CHECK(table != nullptr, "Failed precondition for getConstTable");
+    auto ep = table->properties->getProperty(IR::TableProperties::entriesPropertyName);
+    if (ep == nullptr) return false;
+    BUG_CHECK(ep->value->is<IR::EntriesList>(), "Invalid 'entries' property");
+    if (!ep->isConstant)
+        ::error("%1%: P4Runtime only supports constant table initializers", ep);
+    return true;
+}
+
 static std::vector<ActionRef>
 getActionRefs(const IR::P4Table* table, ReferenceMap* refMap) {
     std::vector<ActionRef> actions;
@@ -1704,9 +1790,27 @@ static void analyzeTable(P4RuntimeAnalyzer& analyzer,
 
     bool supportsTimeout = getSupportsTimeout(table);
 
+    bool isConstTable = getConstTable(table);
+
     analyzer.addTable(table, tableSize, implementation, directCounter,
                       directMeter, defaultAction, actions, matchFields,
-                      supportsTimeout);
+                      supportsTimeout, isConstTable);
+}
+
+static void analyzeParser(P4RuntimeAnalyzer& analyzer,
+                          const IR::ParserBlock* parserBlock) {
+    CHECK_NULL(parserBlock);
+
+    auto parser = parserBlock->container;
+    CHECK_NULL(parser);
+
+    for (auto s : parser->parserLocals) {
+        if (auto inst = s->to<IR::Declaration_Variable>()) {
+            if (!inst->type->is<IR::Type_ValueSet>())
+                continue;
+            analyzer.addValueSet(inst);
+        }
+    }
 }
 
 /// Visit evaluated blocks under the provided top-level block. Guarantees that
@@ -2056,6 +2160,8 @@ P4RuntimeAnalyzer::analyze(const IR::P4Program* program,
                 collectExternSymbols(symbols, block->to<IR::ExternBlock>());
             } else if (block->is<IR::TableBlock>()) {
                 collectTableSymbols(symbols, block->to<IR::TableBlock>(), refMap, typeMap);
+            } else if (block->is<IR::ParserBlock>()) {
+                collectParserSymbols(symbols, block->to<IR::ParserBlock>());
             }
         });
         forAllMatching<IR::Type_Header>(program, [&](const IR::Type_Header* type) {
@@ -2074,6 +2180,8 @@ P4RuntimeAnalyzer::analyze(const IR::P4Program* program,
             analyzeExtern(analyzer, block->to<IR::ExternBlock>(), typeMap);
         } else if (block->is<IR::TableBlock>()) {
             analyzeTable(analyzer, block->to<IR::TableBlock>(), refMap, typeMap);
+        } else if (block->is<IR::ParserBlock>()) {
+            analyzeParser(analyzer, block->to<IR::ParserBlock>());
         }
     });
     analyzeActionProfiles(analyzer, evaluatedProgram, refMap, typeMap);
@@ -2109,17 +2217,6 @@ P4RuntimeAPI generateP4Runtime(const IR::P4Program* program) {
     P4::TypeMap typeMap;
     auto* evaluator = new P4::EvaluatorPass(&refMap, &typeMap);
     PassManager p4RuntimeFixups = {
-        // These are prerequisites of LocalizeAllActions.
-        evaluator,
-        new P4::Inline(&refMap, &typeMap, evaluator),
-        new P4::InlineActions(&refMap, &typeMap),
-        // We currently can't handle global actions; they need to be associated
-        // with a table.
-        new P4::LocalizeAllActions(&refMap),
-        // We need to run these to avoid issues with duplicate or illegal names.
-        // (This is likely mostly or entirely due to the inlining passes above.)
-        new P4::UniqueNames(&refMap),
-        new P4::UniqueParameters(&refMap, &typeMap),
         // We can only handle a very restricted class of action parameters - the
         // types need to be bit<> or int<> - so we fail without this pass.
         new P4::RemoveActionParameters(&refMap, &typeMap),

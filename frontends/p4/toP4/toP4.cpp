@@ -265,6 +265,16 @@ bool ToP4::preorder(const IR::Type_Tuple* t) {
     return false;
 }
 
+bool ToP4::preorder(const IR::Type_ValueSet* t) {
+    dump(3);
+    builder.append("value_set<");
+    auto p4type = t->elementType->getP4Type();
+    CHECK_NULL(p4type);
+    visit(p4type);
+    builder.append(">");
+    return false;
+}
+
 bool ToP4::preorder(const IR::Type_Enum* t) {
     dump(1);
     builder.append("enum ");
@@ -1199,7 +1209,7 @@ bool ToP4::preorder(const IR::EntriesList *l) {
     builder.append("{");
     builder.newline();
     builder.increaseIndent();
-    preorder(&l->entries);
+    visit(&l->entries);
     builder.decreaseIndent();
     builder.emitIndent();
     builder.append("}");
@@ -1208,6 +1218,7 @@ bool ToP4::preorder(const IR::EntriesList *l) {
 }
 
 bool ToP4::preorder(const IR::Entry *e) {
+    dump(2);
     builder.emitIndent();
     if (e->keys->components.size() == 1)
         setListTerm("", "");

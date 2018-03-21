@@ -76,6 +76,19 @@ const ::p4::config::Action* findAction(const P4::P4RuntimeAPI& analysis,
     return &*desiredAction;
 }
 
+/// @return the P4Runtime representation of the value set with the given name,
+/// or null if none is found.
+const ::p4::config::ValueSet* findValueSet(const P4::P4RuntimeAPI& analysis,
+                                           const std::string& name) {
+    auto& vsets = analysis.p4Info->value_sets();
+    auto desiredVSet = std::find_if(vsets.begin(), vsets.end(),
+                                    [&](const ::p4::config::ValueSet& vset) {
+        return vset.preamble().name() == name;
+    });
+    if (desiredVSet == vsets.end()) return nullptr;
+    return &*desiredVSet;
+}
+
 }  // namespace
 
 class P4Runtime : public P4CTest { };
@@ -155,7 +168,7 @@ TEST_F(P4Runtime, IdAssignment) {
 
     {
         // Check that 'igTable' ended up in the P4Info output.
-        auto* igTable = findTable(*test, "igTable");
+        auto* igTable = findTable(*test, "ingress.igTable");
         ASSERT_TRUE(igTable != nullptr);
 
         // Check that the id indicates the correct resource type.
@@ -164,27 +177,27 @@ TEST_F(P4Runtime, IdAssignment) {
         // Check that the rest of the id matches the hash value that we expect.
         // (If we were to ever change the hash algorithm we use when mapping P4
         // names to P4Runtime ids, we'd need to change this test.)
-        EXPECT_EQ(0x00002C0Eu, igTable->preamble().id() & 0x00ffffff);
+        EXPECT_EQ(16119u, igTable->preamble().id() & 0x00ffffff);
     }
 
     {
         // Check that 'igTableWithName' ended up in the P4Info output under that
         // name, which is determined by its @name annotation, and *not* under
         // 'igTableWithoutName'.
-        EXPECT_TRUE(findTable(*test, "igTableWithoutName") == nullptr);
-        auto* igTableWithName = findTable(*test, "igTableWithName");
+        EXPECT_TRUE(findTable(*test, "ingress.igTableWithoutName") == nullptr);
+        auto* igTableWithName = findTable(*test, "ingress.igTableWithName");
         ASSERT_TRUE(igTableWithName != nullptr);
 
         // Check that the id of 'igTableWithName' was computed based on its
         // @name annotation. (See above for caveat re: the hash algorithm.)
         EXPECT_EQ(unsigned(PI_TABLE_ID), igTableWithName->preamble().id() >> 24);
-        EXPECT_EQ(0x0000FFEFu, igTableWithName->preamble().id() & 0x00ffffff);
+        EXPECT_EQ(59806u, igTableWithName->preamble().id() & 0x00ffffff);
     }
 
     {
         // Check that 'igTableWithId' ended up in the P4Info output, and that
         // its id matches the one set by its @id annotation.
-        auto* igTableWithId = findTable(*test, "igTableWithId");
+        auto* igTableWithId = findTable(*test, "ingress.igTableWithId");
         ASSERT_TRUE(igTableWithId != nullptr);
         EXPECT_EQ(1234u, igTableWithId->preamble().id());
     }
@@ -193,8 +206,8 @@ TEST_F(P4Runtime, IdAssignment) {
         // Check that 'igTableWithNameAndId' ended up in the P4Info output under
         // that name, and that its id matches the one set by its @id annotation
         // - in other words, that @id takes precedence over @name.
-        EXPECT_TRUE(findTable(*test, "igTableWithoutNameAndId") == nullptr);
-        auto* igTableWithNameAndId = findTable(*test, "igTableWithNameAndId");
+        EXPECT_TRUE(findTable(*test, "ingress.igTableWithoutNameAndId") == nullptr);
+        auto* igTableWithNameAndId = findTable(*test, "ingress.igTableWithNameAndId");
         ASSERT_TRUE(igTableWithNameAndId != nullptr);
         EXPECT_EQ(5678u, igTableWithNameAndId->preamble().id());
     }
@@ -202,9 +215,9 @@ TEST_F(P4Runtime, IdAssignment) {
     {
         // Check that the two tables with conflicting ids are both present, and
         // that they didn't end up with the same id in the P4Info output.
-        auto* conflictingTableA = findTable(*test, "conflictingTableA");
+        auto* conflictingTableA = findTable(*test, "ingress.conflictingTableA");
         ASSERT_TRUE(conflictingTableA != nullptr);
-        auto* conflictingTableB = findTable(*test, "conflictingTableB");
+        auto* conflictingTableB = findTable(*test, "ingress.conflictingTableB");
         ASSERT_TRUE(conflictingTableB != nullptr);
         EXPECT_TRUE(conflictingTableA->preamble().id() == 4321 ||
                     conflictingTableB->preamble().id() == 4321);
@@ -324,7 +337,7 @@ TEST_F(P4Runtime, P4_16_MatchFields) {
     ASSERT_TRUE(test);
     EXPECT_EQ(0u, ::diagnosticCount());
 
-    auto* igTable = findTable(*test, "igTable");
+    auto* igTable = findTable(*test, "ingress.igTable");
     ASSERT_TRUE(igTable != nullptr);
     EXPECT_EQ(38, igTable->match_fields_size());
 
@@ -624,9 +637,10 @@ TEST_F(P4Runtime, StaticTableEntries) {
     ASSERT_TRUE(test);
     EXPECT_EQ(0u, ::diagnosticCount());
 
-    auto table = findTable(*test, "t_exact_ternary");
+    auto table = findTable(*test, "ingress.t_exact_ternary");
     ASSERT_TRUE(table != nullptr);
-    auto action = findAction(*test, "a_with_control_params");
+    EXPECT_TRUE(table->is_const_table());
+    auto action = findAction(*test, "ingress.a_with_control_params");
     ASSERT_TRUE(action != nullptr);
     unsigned int hfAId = 1;
     unsigned int hfBId = 2;
@@ -675,6 +689,90 @@ TEST_F(P4Runtime, StaticTableEntries) {
                 std::string("\x00\x03", 2));
     check_entry(updates.Get(3), "\x04", std::string("\x00\x00", 2),
                 std::string("\x00\x00", 2), std::string("\x00\x04", 2));
+}
+
+TEST_F(P4Runtime, IsConstTable) {
+    auto test = createP4RuntimeTestCase(P4_SOURCE(P4Headers::V1MODEL, R"(
+        header Header { bit<8> hfA; }
+        struct Headers { Header h; }
+        struct Metadata { }
+
+        parser parse(packet_in p, out Headers h, inout Metadata m,
+                     inout standard_metadata_t sm) {
+            state start { transition accept; } }
+        control verifyChecksum(inout Headers h, inout Metadata m) { apply { } }
+        control egress(inout Headers h, inout Metadata m,
+                        inout standard_metadata_t sm) { apply { } }
+        control computeChecksum(inout Headers h, inout Metadata m) { apply { } }
+        control deparse(packet_out p, in Headers h) { apply { } }
+
+        control ingress(inout Headers h, inout Metadata m,
+                        inout standard_metadata_t sm) {
+            action a() { sm.egress_spec = 0; }
+            action a_with_control_params(bit<9> x) { sm.egress_spec = x; }
+
+            table t_const {
+                key = { h.h.hfA : exact; }
+                actions = { a; a_with_control_params; }
+                default_action = a;
+                const entries = {
+                    (0x01) : a_with_control_params(1);
+                }
+            }
+            table t_non_const {
+                key = { h.h.hfA : exact; }
+                actions = { a; a_with_control_params; }
+                default_action = a;
+            }
+            apply { t_const.apply(); t_non_const.apply(); }
+        }
+        V1Switch(parse(), verifyChecksum(), ingress(), egress(),
+                 computeChecksum(), deparse()) main;
+    )"));
+
+    ASSERT_TRUE(test);
+    EXPECT_EQ(0u, ::diagnosticCount());
+
+    auto table_const = findTable(*test, "ingress.t_const");
+    ASSERT_TRUE(table_const != nullptr);
+    EXPECT_TRUE(table_const->is_const_table());
+    auto table_non_const = findTable(*test, "ingress.t_non_const");
+    ASSERT_TRUE(table_non_const != nullptr);
+    EXPECT_FALSE(table_non_const->is_const_table());
+}
+
+TEST_F(P4Runtime, ValueSet) {
+    auto test = createP4RuntimeTestCase(P4_SOURCE(P4Headers::V1MODEL, R"(
+        header Header { bit<32> hfA; bit<16> hfB; }
+        struct Headers { Header h; }
+        struct Metadata { }
+
+        parser parse(packet_in p, out Headers h, inout Metadata m,
+                     inout standard_metadata_t sm) {
+            @size(16) value_set<tuple<bit<32>, bit<16>>> pvs;
+            state start {
+                p.extract(h.h);
+                transition select(h.h.hfA, h.h.hfB) {
+                    pvs: accept;
+                    default: reject; } } }
+        control verifyChecksum(inout Headers h, inout Metadata m) { apply { } }
+        control egress(inout Headers h, inout Metadata m,
+                        inout standard_metadata_t sm) { apply { } }
+        control computeChecksum(inout Headers h, inout Metadata m) { apply { } }
+        control deparse(packet_out p, in Headers h) { apply { } }
+        control ingress(inout Headers h, inout Metadata m,
+                        inout standard_metadata_t sm) { apply { } }
+        V1Switch(parse(), verifyChecksum(), ingress(), egress(),
+                 computeChecksum(), deparse()) main;
+    )"));
+
+    ASSERT_TRUE(test);
+    EXPECT_EQ(0u, ::diagnosticCount());
+
+    auto vset = findValueSet(*test, "parse.pvs");
+    ASSERT_TRUE(vset != nullptr);
+    EXPECT_EQ(48, vset->bitwidth());
+    EXPECT_EQ(16, vset->size());
 }
 
 }  // namespace Test

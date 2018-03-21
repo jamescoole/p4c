@@ -219,6 +219,8 @@ class Slice : Operation_Ternary {
     Slice {
         if (type->is<Type::Unknown>() && e1 && e1->is<Constant>() && e2 && e2->is<Constant>())
             type = IR::Type::Bits::get(getH() - getL() + 1); }
+    // make a slice, folding slices on slices and slices on constants automatically
+    static Expression make(Expression a, int hi, int lo);
 }
 
 class Member : Operation_Unary {
@@ -353,6 +355,16 @@ class ListCompileTimeValue : CompileTimeValue {
     inline Vector<Node> components;
     validate {
         for (auto v : components)
+            BUG_CHECK(v->is<CompileTimeValue>(), "%1%: not a compile-time value", v); }
+#nodbprint
+}
+
+/// Experimental: an extern methond/function call with constant arguments to be
+/// evaluated at compile time
+class CompileTimeMethodCall : MethodCallExpression, CompileTimeValue {
+    CompileTimeMethodCall(MethodCallExpression e) : MethodCallExpression(*e) {}
+    validate {
+        for (auto v : *arguments)
             BUG_CHECK(v->is<CompileTimeValue>(), "%1%: not a compile-time value", v); }
 #nodbprint
 }

@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include "lib/log.h"
 #include "typeChecker.h"
 #include "typeUnification.h"
 #include "typeSubstitution.h"
@@ -126,17 +127,19 @@ Visitor::profile_t TypeInference::init_apply(const IR::Node* node) {
 
 void TypeInference::end_apply(const IR::Node* node) {
     if (readOnly && !(*node == *initialNode)) {
-        ToP4 top4(&std::cout, true, nullptr);
-        std::cout << "Initial program" << std::endl;
-        initialNode->apply(top4);
-        std::cout << "============\nFinal program" << std::endl;
-        ToP4 top41(&std::cout, true, nullptr);
-        node->apply(top41);
+        if (::Log::verbose()) {
+            ToP4 top4(&std::cout, true, nullptr);
+            std::cout << "Initial program" << std::endl;
+            initialNode->apply(top4);
+            std::cout << "============\nFinal program" << std::endl;
+            ToP4 top41(&std::cout, true, nullptr);
+            node->apply(top41);
+        }
         BUG("typechecker mutated program");
     }
     typeMap->updateMap(node);
     if (node->is<IR::P4Program>())
-        LOG4("Typemap: " << std::endl << typeMap);
+        LOG3("Typemap: " << std::endl << typeMap);
 }
 
 bool TypeInference::done() const {
@@ -299,6 +302,8 @@ const IR::Type* TypeInference::canonicalize(const IR::Type* type) {
             return exists->to<IR::Type_Type>()->type;
         return exists;
     }
+    if (auto tt = type->to<IR::Type_Type>())
+        type = tt->type;
 
     if (type->is<IR::Type_SpecializedCanonical>() ||
         type->is<IR::Type_InfInt>() ||
@@ -323,9 +328,12 @@ const IR::Type* TypeInference::canonicalize(const IR::Type* type) {
         auto et = canonicalize(set->elementType);
         if (et == nullptr)
             return nullptr;
+        if (et->is<IR::Type_Stack>() || et->is<IR::Type_Set>() ||
+            et->is<IR::Type_HeaderUnion>())
+            ::error("%1%: Sets of %2% are not supported", type, et);
         if (et == set->elementType)
             return type;
-        const IR::Type* canon = new IR::Type_Set(type->srcInfo, et);
+        const IR::Type *canon = new IR::Type_Set(type->srcInfo, et);
         return canon;
     } else if (type->is<IR::Type_Stack>()) {
         auto stack = type->to<IR::Type_Stack>();
@@ -357,7 +365,7 @@ const IR::Type* TypeInference::canonicalize(const IR::Type* type) {
                 return nullptr;
             fields->push_back(t1);
         }
-        const IR::Type* canon;
+        const IR::Type *canon;
         if (anyChange || anySet)
             canon = new IR::Type_Tuple(type->srcInfo, *fields);
         else
@@ -1037,7 +1045,7 @@ const IR::Node* TypeInference::postorder(IR::P4Parser* parser) {
 
 const IR::Node* TypeInference::postorder(IR::Type_InfInt* type) {
     if (done()) return type;
-    auto tt = new IR::Type_Type(type);
+    auto tt = new IR::Type_Type(getOriginal<IR::Type>());
     setType(getOriginal(), tt);
     return type;
 }
@@ -1136,6 +1144,25 @@ const IR::Node* TypeInference::postorder(IR::Type_Tuple* type) {
 
 const IR::Node* TypeInference::postorder(IR::Type_Set* type) {
     (void)setTypeType(type);
+    return type;
+}
+
+const IR::Node* TypeInference::postorder(IR::Type_ValueSet* type) {
+    // This is a specialized version of setTypeType
+    auto canon = canonicalize(type->elementType);
+    if (canon != nullptr) {
+        // Learn the new type
+        if (canon != type->elementType) {
+            TypeInference tc(refMap, typeMap, true);
+            unsigned e = ::errorCount();
+            (void)canon->apply(tc);
+            if (::errorCount() > e)
+                return nullptr;
+        }
+        auto tt = new IR::Type_Type(new IR::Type_Set(canon));
+        setType(getOriginal(), tt);
+        setType(type, tt);
+    }
     return type;
 }
 
@@ -1283,6 +1310,11 @@ const IR::Node* TypeInference::postorder(IR::Parameter* param) {
         return param;
     BUG_CHECK(!paramType->is<IR::Type_Type>(), "%1%: unexpected type", paramType);
 
+    if (paramType->is<IR::P4Control>() || paramType->is<IR::P4Parser>()) {
+        typeError("%1%: parameter cannot have type %2%", param, paramType);
+        return param;
+    }
+
     // The parameter type cannot have free type variables
     if (paramType->is<IR::IMayBeGenericType>()) {
         auto gen = paramType->to<IR::IMayBeGenericType>();
@@ -1313,6 +1345,8 @@ const IR::Node* TypeInference::postorder(IR::StringLiteral* expression) {
     if (done()) return expression;
     setType(getOriginal(), IR::Type_String::get());
     setType(expression, IR::Type_String::get());
+    setCompileTimeConstant(expression);
+    setCompileTimeConstant(getOriginal<IR::Expression>());
     return expression;
 }
 
@@ -1424,7 +1458,6 @@ const IR::Node* TypeInference::postorder(IR::Concat* expression) {
  * Used to typecheck pre-defined entries.
  */
 const IR::Node* TypeInference::postorder(IR::Key* key) {
-    LOG1("TypeInference: visiting " << dbp(key));
     // compute the type and store it in typeMap
     auto keyTuple = new IR::Type_Tuple;
     for (auto ke : key->keyElements) {
@@ -1438,7 +1471,6 @@ const IR::Node* TypeInference::postorder(IR::Key* key) {
     LOG2("Setting key type to " << dbp(keyTuple));
     setType(key, keyTuple);
     // installing also for the original because we cannot tell which one will survive in the ir
-    // \TODO: figure out the rules of survivorship
     LOG2("Setting key type to " << dbp(getOriginal()));
     setType(getOriginal(), keyTuple);
     return key;
@@ -1448,7 +1480,6 @@ const IR::Node* TypeInference::postorder(IR::Key* key) {
  *  typecheck a table initializer entry list
  */
 const IR::Node* TypeInference::preorder(IR::EntriesList* el) {
-    LOG1("TypeInference: visiting: " << el);
     if (done()) return el;
     auto table = findContext<IR::P4Table>();
     BUG_CHECK(table != nullptr, "%1% entries not within a table", el);
@@ -1487,7 +1518,6 @@ const IR::Node* TypeInference::preorder(IR::EntriesList* el) {
  *
  */
 const IR::Node* TypeInference::postorder(IR::Entry* entry) {
-    LOG1("TypeInference: visiting: " << entry);
     if (done()) return entry;
     auto table = findContext<IR::P4Table>();
     if (table == nullptr)
@@ -1858,7 +1888,6 @@ const IR::Node* TypeInference::bitwise(const IR::Operation_Binary* expression) {
 
 // Handle .. and &&&
 const IR::Node* TypeInference::typeSet(const IR::Operation_Binary* expression) {
-    LOG1("TypeInference::typeSet visiting " << expression);
     if (done()) return expression;
     auto ltype = getType(expression->left);
     auto rtype = getType(expression->right);
@@ -2600,6 +2629,7 @@ const IR::Node* TypeInference::postorder(IR::MethodCallExpression* expression) {
         // Allocate a fresh variable for the return type; it will be hopefully bound in the process.
         auto rettype = new IR::Type_Var(IR::ID(refMap->newName("R"), nullptr));
         auto args = new IR::Vector<IR::ArgumentInfo>();
+        bool constArgs = true;
         for (auto arg : *expression->arguments) {
             auto argType = getType(arg);
             if (argType == nullptr)
@@ -2607,6 +2637,7 @@ const IR::Node* TypeInference::postorder(IR::MethodCallExpression* expression) {
             auto argInfo = new IR::ArgumentInfo(arg->srcInfo, isLeftValue(arg),
                                                 isCompileTimeConstant(arg), argType);
             args->push_back(argInfo);
+            constArgs &= isCompileTimeConstant(arg);
         }
         auto typeArgs = new IR::Vector<IR::Type>();
         for (auto ta : *expression->typeArguments) {
@@ -2655,7 +2686,9 @@ const IR::Node* TypeInference::postorder(IR::MethodCallExpression* expression) {
             returnType->is<IR::P4Parser>() ||
             returnType->is<IR::P4Control>() ||
             returnType->is<IR::Type_Package>() ||
-            returnType->is<IR::Type_Extern>()) {
+            (returnType->is<IR::Type_Extern>() && !constArgs)) {
+            // Expermental: methods with all constant arguments can return an extern
+            // instance as a factory method evaluated at compile time.
             typeError("%1%: illegal return type %2%", expression, returnType);
             return expression;
         }
@@ -2681,6 +2714,11 @@ const IR::Node* TypeInference::postorder(IR::MethodCallExpression* expression) {
             if (ef->method->name == IR::ParserState::verify)
                 if (!findContext<IR::P4Parser>())
                     typeError("%1%: may only be invoked in parsers", ef->expr);
+            if (constArgs) {
+                // extern functions with constant args are compile-time constants
+                setCompileTimeConstant(expression);
+                setCompileTimeConstant(getOriginal<IR::Expression>());
+            }
         }
 
         if (mi->is<ExternMethod>())

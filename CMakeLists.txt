@@ -30,15 +30,22 @@ set (CMAKE_USE_RELATIVE_PATHS 1)
 
 OPTION (ENABLE_DOCS "Build the documentation" OFF)
 OPTION (ENABLE_P4RUNTIME_TO_PD "Build the P4Runtime PD Generator" ON)
+OPTION (ENABLE_GTESTS "Enable building and running GTest unit tests" ON)
 OPTION (ENABLE_BMV2 "Build the BMV2 backend (required for the full test suite)" ON)
 OPTION (ENABLE_EBPF "Build the EBPF backend (required for the full test suite)" ON)
 OPTION (ENABLE_P4TEST "Build the P4Test backend (required for the full test suite)" ON)
 OPTION (ENABLE_P4C_GRAPHS "Build the p4c-graphs backend" ON)
+OPTION (ENABLE_PROTOBUF_STATIC "Link against Protobuf statically" ON)
 
 if (NOT $ENV{P4C_VERSION} STREQUAL "")
+  # Allow the version to be set from outside
   set (P4C_VERSION $ENV{P4C_VERSION})
 else()
-  set (P4C_VERSION "0.1")
+  execute_process (COMMAND git rev-parse --short HEAD
+    OUTPUT_VARIABLE P4C_GIT_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE rc)
+  set (P4C_VERSION "0.5 (SHA: ${P4C_GIT_SHA})")
 endif()
 include(P4CUtils)
 include(UnifiedBuild)
@@ -52,10 +59,14 @@ set (P4C_LIB_DEPS)
 find_package (PythonInterp REQUIRED)
 find_package (FLEX REQUIRED)
 find_package (BISON REQUIRED)
-set(SAVED_CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_FIND_LIBRARY_SUFFIXES})
-set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+if (ENABLE_PROTOBUF_STATIC)
+  set(SAVED_CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_FIND_LIBRARY_SUFFIXES})
+  set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+endif ()
 find_package (Protobuf 3.0.0 REQUIRED)
-set(CMAKE_FIND_LIBRARY_SUFFIXES ${SAVED_CMAKE_FIND_LIBRARY_SUFFIXES})
+if (ENABLE_PROTOBUF_STATIC)
+  set(CMAKE_FIND_LIBRARY_SUFFIXES ${SAVED_CMAKE_FIND_LIBRARY_SUFFIXES})
+endif ()
 # The boost graph headers are optional and only required by the graphs backend
 find_package (Boost QUIET COMPONENTS graph)
 if (Boost_FOUND)
@@ -85,6 +96,8 @@ p4c_add_library (rt clock_gettime HAVE_CLOCK_GETTIME)
 include (CheckIncludeFile)
 check_include_file (execinfo.h HAVE_EXECINFO_H)
 check_include_file (ucontext.h HAVE_UCONTEXT_H)
+include (CheckIncludeFileCXX)
+check_include_file_cxx (cxxabi.h HAVE_CXXABI_H)
 
 # check functions
 
@@ -235,9 +248,10 @@ if (ENABLE_P4C_GRAPHS AND HAVE_LIBBOOST_GRAPH EQUAL 1)
 endif ()
 if (ENABLE_P4RUNTIME_TO_PD)
   add_subdirectory (p4runtime-to-pd)
-endif()
-
-add_subdirectory (test)
+endif ()
+if (ENABLE_GTESTS)
+  add_subdirectory (test)
+endif ()
 
 # IR Generation
 set_source_files_properties(${IR_GENERATOR} PROPERTIES GENERATED TRUE)
@@ -303,6 +317,7 @@ add_custom_target(cpplint-quiet
 add_test(NAME cpplint
   COMMAND ${CPPLINT_CMD} --quiet ${CPPLINT_ARGS} ${CPPLINT_FILES}
   WORKING_DIRECTORY ${P4C_SOURCE_DIR})
+set_tests_properties(cpplint PROPERTIES LABELS cpplint)
 
 # tags, etags
 set (CTAGS_DIRS backends extensions frontends ir lib tools midend)

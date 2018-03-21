@@ -110,9 +110,7 @@ struct ActionSelector_Model : public ::Model::Extern_Model {
 
 struct Random_Model : public ::Model::Elem {
     Random_Model() : Elem("random"),
-                     resultType(IR::Type_Bits::get(32)),
                      modify_field_rng_uniform("modify_field_rng_uniform") {}
-    const IR::Type* resultType;
     ::Model::Elem   modify_field_rng_uniform;
 };
 
@@ -218,12 +216,12 @@ struct Cloner_Model : public ::Model::Extern_Model {
 struct Switch_Model : public ::Model::Elem {
     Switch_Model() : Model::Elem("V1Switch"),
                      parser("p"), verify("vr"), ingress("ig"),
-                     egress("eg"), update("ck"), deparser("dep") {}
+                     egress("eg"), compute("ck"), deparser("dep") {}
     ::Model::Elem parser;  // names of the package arguments
     ::Model::Elem verify;
     ::Model::Elem ingress;
     ::Model::Elem egress;
-    ::Model::Elem update;
+    ::Model::Elem compute;
     ::Model::Elem deparser;
 };
 
@@ -255,11 +253,14 @@ class V1Model : public ::Model::Model {
             sw(), counterOrMeter("$"), counter(), meter(), random(), action_profile(),
             action_selector(), clone(), resubmit("resubmit"),
             tableAttributes(), rangeMatchType("range"), selectorMatchType("selector"),
-            verify("verifyChecksum", headersType), update("computeChecksum", headersType),
+            verify("verifyChecksum", headersType), compute("computeChecksum", headersType),
             digest_receiver(), hash(), algorithm(),
             registers(), drop("mark_to_drop"),
             recirculate("recirculate"), verify_checksum("verify_checksum"),
-            update_checksum("update_checksum"), directMeter(), directCounter()
+            update_checksum("update_checksum"),
+            verify_checksum_with_payload("verify_checksum_with_payload"),
+            update_checksum_with_payload("update_checksum_with_payload"),
+            directMeter(), directCounter()
     {}
 
  public:
@@ -286,7 +287,7 @@ class V1Model : public ::Model::Model {
     ::Model::Elem       rangeMatchType;
     ::Model::Elem       selectorMatchType;
     VerifyUpdate_Model  verify;
-    VerifyUpdate_Model  update;
+    VerifyUpdate_Model  compute;
     DigestReceiver_Model digest_receiver;
     Hash_Model          hash;
     Algorithm_Model     algorithm;
@@ -295,6 +296,8 @@ class V1Model : public ::Model::Model {
     ::Model::Elem       recirculate;
     ::Model::Elem       verify_checksum;
     ::Model::Elem       update_checksum;
+    ::Model::Elem       verify_checksum_with_payload;
+    ::Model::Elem       update_checksum_with_payload;
     DirectMeter_Model   directMeter;
     DirectCounter_Model directCounter;
 

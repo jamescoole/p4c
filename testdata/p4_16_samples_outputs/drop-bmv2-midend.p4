@@ -30,13 +30,15 @@ control IngressI(inout H hdr, inout M meta, inout standard_metadata_t smeta) {
         smeta.deq_timedelta = smeta_1.deq_timedelta;
         smeta.deq_qdepth = smeta_1.deq_qdepth;
         smeta.ingress_global_timestamp = smeta_1.ingress_global_timestamp;
+        smeta.egress_global_timestamp = smeta_1.egress_global_timestamp;
         smeta.lf_field_list = smeta_1.lf_field_list;
         smeta.mcast_grp = smeta_1.mcast_grp;
         smeta.resubmit_flag = smeta_1.resubmit_flag;
         smeta.egress_rid = smeta_1.egress_rid;
         smeta.checksum_error = smeta_1.checksum_error;
+        smeta.recirculate_flag = smeta_1.recirculate_flag;
     }
-    @name("forward") table forward {
+    @name("IngressI.forward") table forward {
         key = {
         }
         actions = {

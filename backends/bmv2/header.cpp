@@ -225,10 +225,10 @@ void ConvertHeaders::addHeaderType(const IR::Type_StructLike *st) {
 
     LOG1("... creating aliases for metadata fields " << st);
     for (auto f : st->fields) {
-        if (auto name_annotation = f->getAnnotation("alias")) {
+        if (auto aliasAnnotation = f->getAnnotation("alias")) {
             auto container = new Util::JsonArray();
             auto alias = new Util::JsonArray();
-            auto target_name = name_annotation->expr.front()->to<IR::StringLiteral>()->value;
+            auto target_name = aliasAnnotation->expr.front()->to<IR::StringLiteral>()->value;
             LOG2("field alias " << target_name);
             container->append(target_name);  // name on target
             // break down the alias into meta . field
@@ -299,6 +299,8 @@ Visitor::profile_t ConvertHeaders::init_apply(const IR::Node* node) {
         } else if (type->is<IR::Type_Error>()) {
             addHeaderField(scalarsTypeName, v->name.name, errorWidth, 0);
             scalars_width += errorWidth;
+        } else if (type->is<IR::Type_Set>()) {
+            continue;  // ignore: this is probably a value_set
         } else {
             P4C_UNIMPLEMENTED("%1%: type not yet handled on this target", type);
         }

@@ -205,6 +205,8 @@ SimpleSwitch::convertExternObjects(Util::JsonArray *result,
             }
             // Do not generate any code for this operation
         }
+    } else {
+        error("Unknown extern type %1%", em->originalExternType->name);
     }
 }
 
@@ -284,7 +286,8 @@ SimpleSwitch::convertExternFunctions(Util::JsonArray *result,
             return;
         }
         auto fields = mc->arguments->at(3);
-        auto calcName = createCalculation(ei->name, fields, backend->json->calculations, nullptr);
+        auto calcName = createCalculation(ei->name, fields, backend->json->calculations,
+                                          false, nullptr);
         calculation->emplace("type", "calculation");
         calculation->emplace("value", calcName);
         parameters->append(calculation);
@@ -585,8 +588,8 @@ SimpleSwitch::convertExternInstances(const IR::Declaration *c,
 
 cstring
 SimpleSwitch::createCalculation(cstring algo, const IR::Expression* fields,
-                                Util::JsonArray* calculations,
-                                const IR::Node* node = nullptr) {
+                                Util::JsonArray* calculations, bool withPayload,
+                                const IR::Node* sourcePositionNode = nullptr) {
     auto typeMap = backend->getTypeMap();
     auto refMap = backend->getRefMap();
     auto conv = backend->getExpressionConverter();
@@ -594,7 +597,8 @@ SimpleSwitch::createCalculation(cstring algo, const IR::Expression* fields,
     auto calc = new Util::JsonObject();
     calc->emplace("name", calcName);
     calc->emplace("id", nextId("calculations"));
-    if (node != nullptr) calc->emplace_non_null("source_info", node->sourceInfoJsonObj());
+    if (sourcePositionNode != nullptr)
+        calc->emplace_non_null("source_info", sourcePositionNode->sourceInfoJsonObj());
     calc->emplace("algo", algo);
     if (!fields->is<IR::ListExpression>()) {
         // expand it into a list
@@ -614,6 +618,14 @@ SimpleSwitch::createCalculation(cstring algo, const IR::Expression* fields,
         typeMap->setType(fields, type);
     }
     auto jright = conv->convertWithConstantWidths(fields);
+    if (withPayload) {
+        auto array = jright->to<Util::JsonArray>();
+        BUG_CHECK(array, "expected a JSON array");
+        auto payload = new Util::JsonObject();
+        payload->emplace("type", "payload");
+        payload->emplace("value", (Util::IJson*)nullptr);
+        array->append(payload);
+    }
     calc->emplace("input", jright);
     calculations->append(calc);
     return calcName;
@@ -624,7 +636,6 @@ SimpleSwitch::convertChecksum(const IR::BlockStatement *block, Util::JsonArray* 
                               Util::JsonArray* calculations, bool verify) {
     if (errorCount() > 0)
         return;
-    cstring functionName = verify ? v1model.verify_checksum.name : v1model.update_checksum.name;
     auto typeMap = backend->getTypeMap();
     auto refMap = backend->getRefMap();
     auto conv = backend->getExpressionConverter();
@@ -635,7 +646,12 @@ SimpleSwitch::convertChecksum(const IR::BlockStatement *block, Util::JsonArray* 
         } else if (auto mc = stat->to<IR::MethodCallStatement>()) {
             auto mi = P4::MethodInstance::resolve(mc, refMap, typeMap);
             if (auto em = mi->to<P4::ExternFunction>()) {
-                if (em->method->name.name == functionName) {
+                cstring functionName = em->method->name.name;
+                if ((verify && (functionName == v1model.verify_checksum.name ||
+                                functionName == v1model.verify_checksum_with_payload.name)) ||
+                    (!verify && (functionName == v1model.update_checksum.name ||
+                                 functionName == v1model.update_checksum_with_payload.name))) {
+                    bool usePayload = functionName.endsWith("_with_payload");
                     if (mi->expr->arguments->size() != 4) {
                         modelError("%1%: Expected 4 arguments", mc);
                         return;
@@ -648,7 +664,7 @@ SimpleSwitch::convertChecksum(const IR::BlockStatement *block, Util::JsonArray* 
                         return;
                     }
                     cstring calcName = createCalculation(ei->name, mi->expr->arguments->at(1),
-                                                         calculations, mc);
+                                                         calculations, usePayload, mc);
                     cksum->emplace("name", refMap->newName("cksum_"));
                     cksum->emplace("id", nextId("checksums"));
                     // TODO(jafingerhut) - add line/col here?
@@ -656,12 +672,17 @@ SimpleSwitch::convertChecksum(const IR::BlockStatement *block, Util::JsonArray* 
                     cksum->emplace("target", jleft->to<Util::JsonObject>()->get("value"));
                     cksum->emplace("type", "generic");
                     cksum->emplace("calculation", calcName);
+                    auto ifcond = conv->convert(mi->expr->arguments->at(0), true, false);
+                    cksum->emplace("if_cond", ifcond);
                     checksums->append(cksum);
                     continue;
                 }
             }
         }
-        ::error("%1%: Only calls to %2% allowed", stat, functionName);
+        ::error("%1%: Only calls to %2% or %3% allowed", stat,
+                verify ? v1model.verify_checksum.name : v1model.update_checksum.name,
+                verify ? v1model.verify_checksum_with_payload.name :
+                v1model.update_checksum_with_payload.name);
     }
 }
 
@@ -733,46 +754,61 @@ SimpleSwitch::setNonPipelineControls(const IR::ToplevelBlock* toplevel,
     if (errorCount() != 0)
         return;
     auto main = toplevel->getMain();
-    auto verify = main->findParameterValue(v1model.sw.verify.name);
-    auto update = main->findParameterValue(v1model.sw.update.name);
+    auto verify = getVerify(toplevel);
+    auto compute = getCompute(toplevel);
     auto deparser = main->findParameterValue(v1model.sw.deparser.name);
-    if (verify == nullptr || update == nullptr || deparser == nullptr ||
-        !verify->is<IR::ControlBlock>() || !update->is<IR::ControlBlock>() ||
+    if (verify == nullptr || compute == nullptr || deparser == nullptr ||
         !deparser->is<IR::ControlBlock>()) {
         modelError("%1%: main package  match the expected model", main);
         return;
     }
-    controls->emplace(verify->to<IR::ControlBlock>()->container->name);
-    controls->emplace(update->to<IR::ControlBlock>()->container->name);
+    controls->emplace(verify->name);
+    controls->emplace(compute->name);
     controls->emplace(deparser->to<IR::ControlBlock>()->container->name);
 }
 
-void
-SimpleSwitch::setUpdateChecksumControls(const IR::ToplevelBlock* toplevel,
-                                        std::set<cstring>* controls) {
+const IR::P4Control*
+SimpleSwitch::getCompute(const IR::ToplevelBlock* toplevel) {
     if (errorCount() != 0)
-        return;
+        return nullptr;
     auto main = toplevel->getMain();
-    auto update = main->findParameterValue(v1model.sw.update.name);
+    auto update = main->findParameterValue(v1model.sw.compute.name);
     if (update == nullptr || !update->is<IR::ControlBlock>()) {
         modelError("%1%: main package does not match the expected model", main);
-        return;
+        return nullptr;
     }
-    controls->emplace(update->to<IR::ControlBlock>()->container->name);
+    return update->to<IR::ControlBlock>()->container;
+}
+
+const IR::P4Control*
+SimpleSwitch::getVerify(const IR::ToplevelBlock* toplevel) {
+    if (errorCount() != 0)
+        return nullptr;
+    auto main = toplevel->getMain();
+    auto verify = main->findParameterValue(v1model.sw.verify.name);
+    if (verify == nullptr || !verify->is<IR::ControlBlock>()) {
+        modelError("%1%: main package does not match the expected model", main);
+        return nullptr;
+    }
+    return verify->to<IR::ControlBlock>()->container;
+}
+
+void
+SimpleSwitch::setComputeChecksumControls(const IR::ToplevelBlock* toplevel,
+                                         std::set<cstring>* controls) {
+    auto ctrl = getCompute(toplevel);
+    if (ctrl == nullptr)
+        return;
+    controls->emplace(ctrl->name);
 }
 
 void
 SimpleSwitch::setVerifyChecksumControls(const IR::ToplevelBlock* toplevel,
                                         std::set<cstring>* controls) {
-    if (errorCount() != 0)
+    auto ctrl = getVerify(toplevel);
+    if (ctrl == nullptr)
         return;
-    auto main = toplevel->getMain();
-    auto update = main->findParameterValue(v1model.sw.verify.name);
-    if (update == nullptr || !update->is<IR::ControlBlock>()) {
-        modelError("%1%: main package does not match the expected model", main);
-        return;
-    }
-    controls->emplace(update->to<IR::ControlBlock>()->container->name);
+    controls->emplace(ctrl->name);
 }
 
 void

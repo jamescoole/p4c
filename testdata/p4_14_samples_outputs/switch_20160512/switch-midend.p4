@@ -1218,75 +1218,75 @@ struct tuple_1 {
 }
 
 control egress(inout headers hdr, inout metadata meta, inout standard_metadata_t standard_metadata) {
-    @name("NoAction") action NoAction_0() {
+    @name(".NoAction") action NoAction_0() {
     }
-    @name("NoAction") action NoAction_1() {
+    @name(".NoAction") action NoAction_1() {
     }
-    @name("NoAction") action NoAction_115() {
+    @name(".NoAction") action NoAction_115() {
     }
-    @name("NoAction") action NoAction_116() {
+    @name(".NoAction") action NoAction_116() {
     }
-    @name("NoAction") action NoAction_117() {
+    @name(".NoAction") action NoAction_117() {
     }
-    @name("NoAction") action NoAction_118() {
+    @name(".NoAction") action NoAction_118() {
     }
-    @name("NoAction") action NoAction_119() {
+    @name(".NoAction") action NoAction_119() {
     }
-    @name("NoAction") action NoAction_120() {
+    @name(".NoAction") action NoAction_120() {
     }
-    @name("NoAction") action NoAction_121() {
+    @name(".NoAction") action NoAction_121() {
     }
-    @name("NoAction") action NoAction_122() {
+    @name(".NoAction") action NoAction_122() {
     }
-    @name("NoAction") action NoAction_123() {
+    @name(".NoAction") action NoAction_123() {
     }
-    @name("NoAction") action NoAction_124() {
+    @name(".NoAction") action NoAction_124() {
     }
-    @name("NoAction") action NoAction_125() {
+    @name(".NoAction") action NoAction_125() {
     }
-    @name("NoAction") action NoAction_126() {
+    @name(".NoAction") action NoAction_126() {
     }
-    @name("NoAction") action NoAction_127() {
+    @name(".NoAction") action NoAction_127() {
     }
-    @name("NoAction") action NoAction_128() {
+    @name(".NoAction") action NoAction_128() {
     }
-    @name("NoAction") action NoAction_129() {
+    @name(".NoAction") action NoAction_129() {
     }
-    @name("NoAction") action NoAction_130() {
+    @name(".NoAction") action NoAction_130() {
     }
-    @name("NoAction") action NoAction_131() {
+    @name(".NoAction") action NoAction_131() {
     }
-    @name("NoAction") action NoAction_132() {
+    @name(".NoAction") action NoAction_132() {
     }
-    @name("NoAction") action NoAction_133() {
+    @name(".NoAction") action NoAction_133() {
     }
-    @name("NoAction") action NoAction_134() {
+    @name(".NoAction") action NoAction_134() {
     }
-    @name("NoAction") action NoAction_135() {
+    @name(".NoAction") action NoAction_135() {
     }
-    @name("NoAction") action NoAction_136() {
+    @name(".NoAction") action NoAction_136() {
     }
-    @name("NoAction") action NoAction_137() {
+    @name(".NoAction") action NoAction_137() {
     }
-    @name("NoAction") action NoAction_138() {
+    @name(".NoAction") action NoAction_138() {
     }
-    @name("NoAction") action NoAction_139() {
+    @name(".NoAction") action NoAction_139() {
     }
-    @name("NoAction") action NoAction_140() {
+    @name(".NoAction") action NoAction_140() {
     }
-    @name("NoAction") action NoAction_141() {
+    @name(".NoAction") action NoAction_141() {
     }
-    @name("NoAction") action NoAction_142() {
+    @name(".NoAction") action NoAction_142() {
     }
-    @name("NoAction") action NoAction_143() {
+    @name(".NoAction") action NoAction_143() {
     }
-    @name("NoAction") action NoAction_144() {
+    @name(".NoAction") action NoAction_144() {
     }
-    @name("NoAction") action NoAction_145() {
+    @name(".NoAction") action NoAction_145() {
     }
-    @name("NoAction") action NoAction_146() {
+    @name(".NoAction") action NoAction_146() {
     }
-    @name("NoAction") action NoAction_147() {
+    @name(".NoAction") action NoAction_147() {
     }
     @name(".egress_port_type_normal") action egress_port_type_normal_0(bit<16> ifindex) {
         meta.egress_metadata.port_type = 2w0;
@@ -2647,28 +2647,40 @@ control egress(inout headers hdr, inout metadata meta, inout standard_metadata_t
     @name(".mpls_ethernet_push1_rewrite") action _mpls_ethernet_push1_rewrite() {
         hdr.inner_ethernet = hdr.ethernet;
         hdr.mpls.push_front(1);
+        hdr.mpls[0].setValid();
         hdr.ethernet.etherType = 16w0x8847;
     }
     @name(".mpls_ip_push1_rewrite") action _mpls_ip_push1_rewrite() {
         hdr.mpls.push_front(1);
+        hdr.mpls[0].setValid();
         hdr.ethernet.etherType = 16w0x8847;
     }
     @name(".mpls_ethernet_push2_rewrite") action _mpls_ethernet_push2_rewrite() {
         hdr.inner_ethernet = hdr.ethernet;
         hdr.mpls.push_front(2);
+        hdr.mpls[0].setValid();
+        hdr.mpls[1].setValid();
         hdr.ethernet.etherType = 16w0x8847;
     }
     @name(".mpls_ip_push2_rewrite") action _mpls_ip_push2_rewrite() {
         hdr.mpls.push_front(2);
+        hdr.mpls[0].setValid();
+        hdr.mpls[1].setValid();
         hdr.ethernet.etherType = 16w0x8847;
     }
     @name(".mpls_ethernet_push3_rewrite") action _mpls_ethernet_push3_rewrite() {
         hdr.inner_ethernet = hdr.ethernet;
         hdr.mpls.push_front(3);
+        hdr.mpls[0].setValid();
+        hdr.mpls[1].setValid();
+        hdr.mpls[2].setValid();
         hdr.ethernet.etherType = 16w0x8847;
     }
     @name(".mpls_ip_push3_rewrite") action _mpls_ip_push3_rewrite() {
         hdr.mpls.push_front(3);
+        hdr.mpls[0].setValid();
+        hdr.mpls[1].setValid();
+        hdr.mpls[2].setValid();
         hdr.ethernet.etherType = 16w0x8847;
     }
     @name(".fabric_rewrite") action _fabric_rewrite(bit<14> tunnel_index) {
@@ -3187,161 +3199,161 @@ struct tuple_9 {
 }
 
 control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_t standard_metadata) {
-    @name("NoAction") action NoAction_148() {
+    @name(".NoAction") action NoAction_148() {
     }
-    @name("NoAction") action NoAction_149() {
+    @name(".NoAction") action NoAction_149() {
     }
-    @name("NoAction") action NoAction_150() {
+    @name(".NoAction") action NoAction_150() {
     }
-    @name("NoAction") action NoAction_151() {
+    @name(".NoAction") action NoAction_151() {
     }
-    @name("NoAction") action NoAction_152() {
+    @name(".NoAction") action NoAction_152() {
     }
-    @name("NoAction") action NoAction_153() {
+    @name(".NoAction") action NoAction_153() {
     }
-    @name("NoAction") action NoAction_154() {
+    @name(".NoAction") action NoAction_154() {
     }
-    @name("NoAction") action NoAction_155() {
+    @name(".NoAction") action NoAction_155() {
     }
-    @name("NoAction") action NoAction_156() {
+    @name(".NoAction") action NoAction_156() {
     }
-    @name("NoAction") action NoAction_157() {
+    @name(".NoAction") action NoAction_157() {
     }
-    @name("NoAction") action NoAction_158() {
+    @name(".NoAction") action NoAction_158() {
     }
-    @name("NoAction") action NoAction_159() {
+    @name(".NoAction") action NoAction_159() {
     }
-    @name("NoAction") action NoAction_160() {
+    @name(".NoAction") action NoAction_160() {
     }
-    @name("NoAction") action NoAction_161() {
+    @name(".NoAction") action NoAction_161() {
     }
-    @name("NoAction") action NoAction_162() {
+    @name(".NoAction") action NoAction_162() {
     }
-    @name("NoAction") action NoAction_163() {
+    @name(".NoAction") action NoAction_163() {
     }
-    @name("NoAction") action NoAction_164() {
+    @name(".NoAction") action NoAction_164() {
     }
-    @name("NoAction") action NoAction_165() {
+    @name(".NoAction") action NoAction_165() {
     }
-    @name("NoAction") action NoAction_166() {
+    @name(".NoAction") action NoAction_166() {
     }
-    @name("NoAction") action NoAction_167() {
+    @name(".NoAction") action NoAction_167() {
     }
-    @name("NoAction") action NoAction_168() {
+    @name(".NoAction") action NoAction_168() {
     }
-    @name("NoAction") action NoAction_169() {
+    @name(".NoAction") action NoAction_169() {
     }
-    @name("NoAction") action NoAction_170() {
+    @name(".NoAction") action NoAction_170() {
     }
-    @name("NoAction") action NoAction_171() {
+    @name(".NoAction") action NoAction_171() {
     }
-    @name("NoAction") action NoAction_172() {
+    @name(".NoAction") action NoAction_172() {
     }
-    @name("NoAction") action NoAction_173() {
+    @name(".NoAction") action NoAction_173() {
     }
-    @name("NoAction") action NoAction_174() {
+    @name(".NoAction") action NoAction_174() {
     }
-    @name("NoAction") action NoAction_175() {
+    @name(".NoAction") action NoAction_175() {
     }
-    @name("NoAction") action NoAction_176() {
+    @name(".NoAction") action NoAction_176() {
     }
-    @name("NoAction") action NoAction_177() {
+    @name(".NoAction") action NoAction_177() {
     }
-    @name("NoAction") action NoAction_178() {
+    @name(".NoAction") action NoAction_178() {
     }
-    @name("NoAction") action NoAction_179() {
+    @name(".NoAction") action NoAction_179() {
     }
-    @name("NoAction") action NoAction_180() {
+    @name(".NoAction") action NoAction_180() {
     }
-    @name("NoAction") action NoAction_181() {
+    @name(".NoAction") action NoAction_181() {
     }
-    @name("NoAction") action NoAction_182() {
+    @name(".NoAction") action NoAction_182() {
     }
-    @name("NoAction") action NoAction_183() {
+    @name(".NoAction") action NoAction_183() {
     }
-    @name("NoAction") action NoAction_184() {
+    @name(".NoAction") action NoAction_184() {
     }
-    @name("NoAction") action NoAction_185() {
+    @name(".NoAction") action NoAction_185() {
     }
-    @name("NoAction") action NoAction_186() {
+    @name(".NoAction") action NoAction_186() {
     }
-    @name("NoAction") action NoAction_187() {
+    @name(".NoAction") action NoAction_187() {
     }
-    @name("NoAction") action NoAction_188() {
+    @name(".NoAction") action NoAction_188() {
     }
-    @name("NoAction") action NoAction_189() {
+    @name(".NoAction") action NoAction_189() {
     }
-    @name("NoAction") action NoAction_190() {
+    @name(".NoAction") action NoAction_190() {
     }
-    @name("NoAction") action NoAction_191() {
+    @name(".NoAction") action NoAction_191() {
     }
-    @name("NoAction") action NoAction_192() {
+    @name(".NoAction") action NoAction_192() {
     }
-    @name("NoAction") action NoAction_193() {
+    @name(".NoAction") action NoAction_193() {
     }
-    @name("NoAction") action NoAction_194() {
+    @name(".NoAction") action NoAction_194() {
     }
-    @name("NoAction") action NoAction_195() {
+    @name(".NoAction") action NoAction_195() {
     }
-    @name("NoAction") action NoAction_196() {
+    @name(".NoAction") action NoAction_196() {
     }
-    @name("NoAction") action NoAction_197() {
+    @name(".NoAction") action NoAction_197() {
     }
-    @name("NoAction") action NoAction_198() {
+    @name(".NoAction") action NoAction_198() {
     }
-    @name("NoAction") action NoAction_199() {
+    @name(".NoAction") action NoAction_199() {
     }
-    @name("NoAction") action NoAction_200() {
+    @name(".NoAction") action NoAction_200() {
     }
-    @name("NoAction") action NoAction_201() {
+    @name(".NoAction") action NoAction_201() {
     }
-    @name("NoAction") action NoAction_202() {
+    @name(".NoAction") action NoAction_202() {
     }
-    @name("NoAction") action NoAction_203() {
+    @name(".NoAction") action NoAction_203() {
     }
-    @name("NoAction") action NoAction_204() {
+    @name(".NoAction") action NoAction_204() {
     }
-    @name("NoAction") action NoAction_205() {
+    @name(".NoAction") action NoAction_205() {
     }
-    @name("NoAction") action NoAction_206() {
+    @name(".NoAction") action NoAction_206() {
     }
-    @name("NoAction") action NoAction_207() {
+    @name(".NoAction") action NoAction_207() {
     }
-    @name("NoAction") action NoAction_208() {
+    @name(".NoAction") action NoAction_208() {
     }
-    @name("NoAction") action NoAction_209() {
+    @name(".NoAction") action NoAction_209() {
     }
-    @name("NoAction") action NoAction_210() {
+    @name(".NoAction") action NoAction_210() {
     }
-    @name("NoAction") action NoAction_211() {
+    @name(".NoAction") action NoAction_211() {
     }
-    @name("NoAction") action NoAction_212() {
+    @name(".NoAction") action NoAction_212() {
     }
-    @name("NoAction") action NoAction_213() {
+    @name(".NoAction") action NoAction_213() {
     }
-    @name("NoAction") action NoAction_214() {
+    @name(".NoAction") action NoAction_214() {
     }
-    @name("NoAction") action NoAction_215() {
+    @name(".NoAction") action NoAction_215() {
     }
-    @name("NoAction") action NoAction_216() {
+    @name(".NoAction") action NoAction_216() {
     }
-    @name("NoAction") action NoAction_217() {
+    @name(".NoAction") action NoAction_217() {
     }
-    @name("NoAction") action NoAction_218() {
+    @name(".NoAction") action NoAction_218() {
     }
-    @name("NoAction") action NoAction_219() {
+    @name(".NoAction") action NoAction_219() {
     }
-    @name("NoAction") action NoAction_220() {
+    @name(".NoAction") action NoAction_220() {
     }
-    @name("NoAction") action NoAction_221() {
+    @name(".NoAction") action NoAction_221() {
     }
-    @name("NoAction") action NoAction_222() {
+    @name(".NoAction") action NoAction_222() {
     }
-    @name("NoAction") action NoAction_223() {
+    @name(".NoAction") action NoAction_223() {
     }
-    @name("NoAction") action NoAction_224() {
+    @name(".NoAction") action NoAction_224() {
     }
-    @name("NoAction") action NoAction_225() {
+    @name(".NoAction") action NoAction_225() {
     }
     @name(".rmac_hit") action rmac_hit_0() {
         meta.l3_metadata.rmac_hit = 1w1;
@@ -3554,7 +3566,7 @@ control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_
         meta.ingress_metadata.ingress_port = standard_metadata.ingress_port;
         meta.l2_metadata.same_if_check = meta.ingress_metadata.ifindex;
         standard_metadata.egress_spec = 9w511;
-        random(meta.ingress_metadata.sflow_take_sample, 32w0, 32w0x7fffffff);
+        random<bit<32>>(meta.ingress_metadata.sflow_take_sample, 32w0, 32w0x7fffffff);
     }
     @name(".switch_config_params") table _switch_config_params_0 {
         actions = {
@@ -5806,13 +5818,13 @@ control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_
                     _validate_packet_0.apply();
                 if (meta.ingress_metadata.port_type == 2w0) 
                     _smac_0.apply();
-                if ((meta.ingress_metadata.bypass_lookups & 16w0x1) == 16w0) 
+                if (meta.ingress_metadata.bypass_lookups & 16w0x1 == 16w0) 
                     _dmac_0.apply();
                 if (meta.l3_metadata.lkp_ip_type == 2w0) 
-                    if ((meta.ingress_metadata.bypass_lookups & 16w0x4) == 16w0) 
+                    if (meta.ingress_metadata.bypass_lookups & 16w0x4 == 16w0) 
                         _mac_acl_0.apply();
                 else 
-                    if ((meta.ingress_metadata.bypass_lookups & 16w0x4) == 16w0) 
+                    if (meta.ingress_metadata.bypass_lookups & 16w0x4 == 16w0) 
                         if (meta.l3_metadata.lkp_ip_type == 2w1) 
                             _ip_acl_0.apply();
                         else 
@@ -5821,7 +5833,7 @@ control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_
                 _qos_0.apply();
                 switch (rmac.apply().action_run) {
                     default: {
-                        if ((meta.ingress_metadata.bypass_lookups & 16w0x2) == 16w0) {
+                        if (meta.ingress_metadata.bypass_lookups & 16w0x2 == 16w0) {
                             if (meta.l3_metadata.lkp_ip_type == 2w1 && meta.ipv4_metadata.ipv4_unicast_enabled == 1w1) {
                                 _ipv4_racl_0.apply();
                                 if (meta.ipv4_metadata.ipv4_urpf_mode != 2w0) 
@@ -5861,14 +5873,14 @@ control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_
                     }
                     rmac_miss_0: {
                         if (meta.l3_metadata.lkp_ip_type == 2w1) {
-                            if ((meta.ingress_metadata.bypass_lookups & 16w0x1) == 16w0) 
+                            if (meta.ingress_metadata.bypass_lookups & 16w0x1 == 16w0) 
                                 switch (_ipv4_multicast_bridge.apply().action_run) {
                                     _on_miss_21: {
                                         _ipv4_multicast_bridge_star_g.apply();
                                     }
                                 }
 
-                            if ((meta.ingress_metadata.bypass_lookups & 16w0x2) == 16w0 && meta.multicast_metadata.ipv4_multicast_enabled == 1w1) 
+                            if (meta.ingress_metadata.bypass_lookups & 16w0x2 == 16w0 && meta.multicast_metadata.ipv4_multicast_enabled == 1w1) 
                                 switch (_ipv4_multicast_route.apply().action_run) {
                                     _on_miss_22: {
                                         _ipv4_multicast_route_star_g.apply();
@@ -5878,14 +5890,14 @@ control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_
                         }
                         else 
                             if (meta.l3_metadata.lkp_ip_type == 2w2) {
-                                if ((meta.ingress_metadata.bypass_lookups & 16w0x1) == 16w0) 
+                                if (meta.ingress_metadata.bypass_lookups & 16w0x1 == 16w0) 
                                     switch (_ipv6_multicast_bridge.apply().action_run) {
                                         _on_miss_29: {
                                             _ipv6_multicast_bridge_star_g.apply();
                                         }
                                     }
 
-                                if ((meta.ingress_metadata.bypass_lookups & 16w0x2) == 16w0 && meta.multicast_metadata.ipv6_multicast_enabled == 1w1) 
+                                if (meta.ingress_metadata.bypass_lookups & 16w0x2 == 16w0 && meta.multicast_metadata.ipv6_multicast_enabled == 1w1) 
                                     switch (_ipv6_multicast_route.apply().action_run) {
                                         _on_miss_30: {
                                             _ipv6_multicast_route_star_g.apply();
@@ -5897,7 +5909,7 @@ control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_
                 }
 
             }
-        if ((meta.ingress_metadata.bypass_lookups & 16w0x10) == 16w0) 
+        if (meta.ingress_metadata.bypass_lookups & 16w0x10 == 16w0) 
             _meter_index_2.apply();
         if (meta.tunnel_metadata.tunnel_terminate == 1w0 && hdr.ipv4.isValid() || meta.tunnel_metadata.tunnel_terminate == 1w1 && hdr.inner_ipv4.isValid()) 
             _compute_ipv4_hashes_0.apply();
@@ -5907,7 +5919,7 @@ control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_
             else 
                 _compute_non_ip_hashes_0.apply();
         _compute_other_hashes_0.apply();
-        if ((meta.ingress_metadata.bypass_lookups & 16w0x10) == 16w0) 
+        if (meta.ingress_metadata.bypass_lookups & 16w0x10 == 16w0) 
             _meter_action_0.apply();
         if (meta.ingress_metadata.port_type != 2w1) {
             _ingress_bd_stats_0.apply();
@@ -5928,7 +5940,7 @@ control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_
         }
         _fabric_lag_0.apply();
         if (meta.ingress_metadata.port_type != 2w1) 
-            if ((meta.ingress_metadata.bypass_lookups & 16w0x20) == 16w0) {
+            if (meta.ingress_metadata.bypass_lookups & 16w0x20 == 16w0) {
                 _system_acl_0.apply();
                 if (meta.ingress_metadata.drop_flag == 1w1) 
                     _drop_stats_4.apply();
