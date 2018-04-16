@@ -151,7 +151,11 @@ class TypeInference : public Transform {
             checkExternConstructor(const IR::Node* errorPosition,
                                    const IR::Type_Extern* ext,
                                    const IR::Vector<IR::Expression> *arguments);
-    bool checkParameters(const IR::ParameterList* paramList, bool forbidModules = false) const;
+
+    static constexpr bool forbidModules = true;
+    static constexpr bool forbidPackages = true;
+    bool checkParameters(const IR::ParameterList* paramList,
+                         bool forbidModules = false, bool forbidPackage = false) const;
     const IR::Type* setTypeType(const IR::Type* type, bool learn = true);
 
     //////////////////////////////////////////////////////////////
@@ -204,12 +208,12 @@ class TypeInference : public Transform {
     const IR::Node* postorder(IR::Type_SpecializedCanonical* type) override;
     const IR::Node* postorder(IR::Type_Tuple* type) override;
     const IR::Node* postorder(IR::Type_Set* type) override;
-    const IR::Node* postorder(IR::Type_ValueSet* type) override;
     const IR::Node* postorder(IR::Type_ArchBlock* type) override;
     const IR::Node* postorder(IR::Type_Package* type) override;
     const IR::Node* postorder(IR::Type_ActionEnum* type) override;
     const IR::Node* postorder(IR::P4Table* type) override;
     const IR::Node* postorder(IR::P4Action* type) override;
+    const IR::Node* postorder(IR::P4ValueSet* type) override;
     const IR::Node* postorder(IR::Key* key) override;
     const IR::Node* postorder(IR::Entry* e) override;
 
