@@ -28,7 +28,6 @@ namespace graphs {
 
 class ParserGraphs : public Inspector {
     const P4::ReferenceMap* refMap;
-    const P4::TypeMap* typeMap;
     const cstring graphsDir;
 
     struct TransitionEdge {
@@ -46,9 +45,9 @@ class ParserGraphs : public Inspector {
     safe_vector<const IR::ParserState*> states;
 
  public:
-    ParserGraphs(P4::ReferenceMap *refMap, P4::TypeMap *typeMap, const cstring &graphsDir) :
-            refMap(refMap), typeMap(typeMap), graphsDir(graphsDir) {
-        CHECK_NULL(refMap); CHECK_NULL(typeMap); setName("ParserGraphs");
+    ParserGraphs(P4::ReferenceMap *refMap, P4::TypeMap *, const cstring &graphsDir) :
+            refMap(refMap), graphsDir(graphsDir) {
+        CHECK_NULL(refMap); setName("ParserGraphs");
     }
 
     void postorder(const IR::P4Parser* parser) override;

@@ -125,7 +125,7 @@ CompilerOptions::CompilerOptions() : Util::Options(defaultMessage) {
                    [this](const char* arg) { outputFile = arg; return true; },
                    "Write output to outfile");
     registerOption("--Wdisable", "diagnostic",
-        [this](const char *diagnostic) {
+        [](const char *diagnostic) {
             if (diagnostic) {
                 P4CContext::get().setDiagnosticAction(diagnostic,
                                                       DiagnosticAction::Ignore);
@@ -138,7 +138,7 @@ CompilerOptions::CompilerOptions() : Util::Options(defaultMessage) {
            "diagnostic is specified.",
         OptionFlags::OptionalArgument);
     registerOption("--Wwarn", "diagnostic",
-        [this](const char *diagnostic) {
+        [](const char *diagnostic) {
             if (diagnostic) {
                 P4CContext::get().setDiagnosticAction(diagnostic,
                                                       DiagnosticAction::Warn);
@@ -151,7 +151,7 @@ CompilerOptions::CompilerOptions() : Util::Options(defaultMessage) {
            "as warnings (the default) if no diagnostic is specified.",
         OptionFlags::OptionalArgument);
     registerOption("--Werror", "diagnostic",
-        [this](const char *diagnostic) {
+        [](const char *diagnostic) {
             if (diagnostic) {
                 P4CContext::get().setDiagnosticAction(diagnostic,
                                                       DiagnosticAction::Error);
@@ -167,7 +167,7 @@ CompilerOptions::CompilerOptions() : Util::Options(defaultMessage) {
                    [](const char* arg) { Log::addDebugSpec(arg); return true; },
                    "[Compiler debugging] Adjust logging level per file (see below)");
     registerOption("-v", nullptr,
-                   [this](const char*) { Log::increaseVerbosity(); return true; },
+                   [](const char*) { Log::increaseVerbosity(); return true; },
                    "[Compiler debugging] Increase verbosity level (can be repeated)");
     registerOption("--top4", "pass1[,pass2]",
                    [this](const char* arg) {
